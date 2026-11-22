@@ -1020,13 +1020,13 @@ describe('importWeekTemplate', () => {
     it('get the time, title and notes of the file', () => {
       const result = importInto(
         schedule(),
-        template([templateEvent({ day: 5, start: '9:05', end: '24:00', title: 'Hackathon', notes: 'Pizza at 20:00' })]),
+        template([templateEvent({ day: 5, start: '9:15', end: '24:00', title: 'Hackathon', notes: 'Pizza at 20:00' })]),
       );
       expect(eventsOf(result.dataset, TARGET)).toStrictEqual([
         {
           id: 'n1',
           day: 5,
-          start: 545,
+          start: 555,
           end: 1440,
           title: 'Hackathon',
           subjectId: null,

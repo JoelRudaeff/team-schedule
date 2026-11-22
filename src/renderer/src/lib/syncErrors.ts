@@ -7,6 +7,7 @@ export const SYNC_ERROR_TEXT: Record<SyncError['code'], MessageKey> = {
   auth: 'store.errAuth',
   'not-found': 'store.errNotFound',
   'dubious-ownership': 'store.errDubious',
+  'branch-missing': 'store.errBranchMissing',
   timeout: 'store.errTimeout',
   'git-missing': 'store.errGitMissing',
   'invalid-url': 'store.errInvalidUrl',

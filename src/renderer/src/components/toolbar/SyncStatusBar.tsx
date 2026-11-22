@@ -55,7 +55,7 @@ export function SyncStatusBar(): ReactNode {
     label = error.code === 'offline' || error.code === 'timeout' ? t('toolbar.statusOffline') : error.code === 'auth' ? t('toolbar.statusAuth') : t('toolbar.statusError');
   } else if (behind > 0 && mine > 0) {
     visual = 'diverged';
-    label = t('toolbar.statusBoth', { mine });
+    label = tn('toolbar.statusBoth', mine);
   } else if (behind > 0) {
     visual = 'behind';
     label = tn('toolbar.statusBehind', behind);

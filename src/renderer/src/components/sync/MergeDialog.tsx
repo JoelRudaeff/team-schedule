@@ -273,8 +273,20 @@ export function MergeDialog({ dialog }: { dialog: Extract<DialogState, { type: '
                   type="button"
                   role="radio"
                   aria-checked={option === entry}
+                  // One tab stop, on the choice that is selected: the dialog opens with the focus
+                  // there, so Enter confirms what is shown as chosen instead of changing it.
+                  tabIndex={option === entry ? 0 : -1}
+                  data-autofocus={option === entry ? true : undefined}
                   className={`sy-option${option === entry ? ' is-selected' : ''}`}
                   onClick={() => setOption(entry)}
+                  onKeyDown={(event) => {
+                    const step = event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1 : event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? -1 : 0;
+                    if (step === 0) return;
+                    event.preventDefault();
+                    const next = options[(options.indexOf(entry) + step + options.length) % options.length];
+                    setOption(next);
+                    event.currentTarget.parentElement?.querySelector<HTMLElement>(`[data-testid="merge-option-${next}"]`)?.focus();
+                  }}
                   data-testid={`merge-option-${entry}`}
                 >
                   <span className="sy-option__radio" />

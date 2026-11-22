@@ -165,6 +165,7 @@ export function parseConnectRequest(value: unknown): ConnectRequest {
     branch: input.branch === null ? null : asString(input.branch, 'branch'),
     userName: asString(input.userName, 'userName'),
     userEmail: asString(input.userEmail, 'userEmail'),
+    ...(input.createBranch === undefined ? {} : { createBranch: asBoolean(input.createBranch, 'createBranch') }),
   };
 }
 

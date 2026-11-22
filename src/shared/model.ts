@@ -214,13 +214,21 @@ export function updateCourse(dataset: Dataset, patch: Partial<CourseInfo>): Data
   const current = dataset.config.course;
   const usable = (date: IsoDate | null | undefined, fallback: IsoDate | null): IsoDate | null =>
     date === undefined || (date !== null && !isValidIsoDate(date)) ? fallback : date;
-  const next: CourseInfo = {
+  let next: CourseInfo = {
     name: (patch.name ?? current.name).trim(),
     startDate: usable(patch.startDate, current.startDate),
     endDate: usable(patch.endDate, current.endDate),
   };
+  // A course that ends before it starts has no weeks at all. Such a pair is never stored:
+  // the dates stay as they were (the name may still change).
+  if (isCourseInverted(next)) next = { ...next, startDate: current.startDate, endDate: current.endDate };
   if (deepEqual(current, next)) return dataset;
   return { ...dataset, config: { ...dataset.config, course: next } };
+}
+
+/** True when both dates are set and the course would end before it starts. */
+export function isCourseInverted(course: Pick<CourseInfo, 'startDate' | 'endDate'>): boolean {
+  return course.startDate !== null && course.endDate !== null && course.startDate > course.endDate;
 }
 
 export function isValidTimeGrid(grid: TimeGrid): boolean {
@@ -303,7 +311,8 @@ export function updateEntity(
   );
 }
 
-function stripReference(event: ScheduleEvent, kind: EntityKind, id: string): ScheduleEvent {
+/** The event without its reference to the entry (the same object when it has none). */
+export function stripReference(event: ScheduleEvent, kind: EntityKind, id: string): ScheduleEvent {
   switch (kind) {
     case 'subject':
       return event.subjectId === id ? { ...event, subjectId: null } : event;
@@ -316,7 +325,70 @@ function stripReference(event: ScheduleEvent, kind: EntityKind, id: string): Sch
   }
 }
 
-function eventReferences(event: ScheduleEvent, kind: EntityKind, id: string): boolean {
+/**
+ * The event pointing to the entry as well. A subject / location is only filled in where the
+ * event has none: an event has one of each, and another choice is never overwritten.
+ */
+export function addReference(event: ScheduleEvent, kind: EntityKind, id: string): ScheduleEvent {
+  switch (kind) {
+    case 'subject':
+      return event.subjectId === null ? { ...event, subjectId: id } : event;
+    case 'location':
+      return event.locationId === null ? { ...event, locationId: id } : event;
+    case 'teacher':
+      return event.teacherIds.includes(id) ? event : { ...event, teacherIds: uniqueSorted([...event.teacherIds, id]) };
+    case 'class':
+      return event.classIds.includes(id) ? event : { ...event, classIds: uniqueSorted([...event.classIds, id]) };
+  }
+}
+
+/** The event with every reference to `from` pointing to `to` instead (the same object when it has none). */
+export function replaceReference(event: ScheduleEvent, kind: EntityKind, from: string, to: string): ScheduleEvent {
+  if (!eventReferences(event, kind, from)) return event;
+  switch (kind) {
+    case 'subject':
+      return { ...event, subjectId: to };
+    case 'location':
+      return { ...event, locationId: to };
+    case 'teacher':
+      return { ...event, teacherIds: uniqueSorted(event.teacherIds.map((t) => (t === from ? to : t))) };
+    case 'class':
+      return { ...event, classIds: uniqueSorted(event.classIds.map((c) => (c === from ? to : c))) };
+  }
+}
+
+/** The ids of `kind` the event points to. */
+export function referencedIds(event: ScheduleEvent, kind: EntityKind): string[] {
+  switch (kind) {
+    case 'subject':
+      return event.subjectId ? [event.subjectId] : [];
+    case 'location':
+      return event.locationId ? [event.locationId] : [];
+    case 'teacher':
+      return event.teacherIds;
+    case 'class':
+      return event.classIds;
+  }
+}
+
+/** Every event of every week passed through `change`; the same dataset when no event changed. */
+export function mapEvents(dataset: Dataset, change: (event: ScheduleEvent, weekStart: IsoDate) => ScheduleEvent): Dataset {
+  let weeksChanged = false;
+  const weeks: Record<IsoDate, WeekData> = {};
+  for (const [weekStart, week] of Object.entries(dataset.weeks)) {
+    let changed = false;
+    const events = week.events.map((event) => {
+      const next = change(event, weekStart);
+      if (next !== event) changed = true;
+      return next;
+    });
+    weeks[weekStart] = changed ? { ...week, events } : week;
+    if (changed) weeksChanged = true;
+  }
+  return weeksChanged ? { ...dataset, weeks } : dataset;
+}
+
+export function eventReferences(event: ScheduleEvent, kind: EntityKind, id: string): boolean {
   switch (kind) {
     case 'subject':
       return event.subjectId === id;
@@ -364,11 +436,16 @@ export function countEntityUsage(dataset: Dataset, kind: EntityKind, id: string)
   return count;
 }
 
+/** What makes two names "the same name": surrounding blanks and upper / lower case do not count. */
+export function nameKey(name: string): string {
+  return name.trim().toLocaleLowerCase();
+}
+
 /** Case-insensitive, whitespace-trimmed name lookup; used to prevent duplicate names. */
 export function findEntityByName(config: ScheduleConfig, kind: EntityKind, name: string): NamedItem | undefined {
-  const wanted = name.trim().toLocaleLowerCase();
+  const wanted = nameKey(name);
   if (wanted === '') return undefined;
-  return entityList(config, kind).find((e) => e.name.trim().toLocaleLowerCase() === wanted);
+  return entityList(config, kind).find((e) => nameKey(e.name) === wanted);
 }
 
 // ───────────────────────────── view helpers ─────────────────────────────

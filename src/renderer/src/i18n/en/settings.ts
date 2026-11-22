@@ -53,7 +53,7 @@ export const settings = {
   courseEnd: 'Course ends',
   courseWeeks_one: 'The course is {count} week long.',
   courseWeeks_other: 'The course is {count} weeks long.',
-  courseDatesInvalid: 'The end date is before the start date.',
+  courseDatesInvalid: 'The end date is before the start date. The dates are not stored until they fit.',
   courseDatesHint: 'With a start date, weeks are numbered from the first week of the course.',
   hoursTitle: 'Hours shown in the week',
   dayStart: 'Day starts at',

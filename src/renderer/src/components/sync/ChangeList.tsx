@@ -24,7 +24,9 @@ export function ChangeList({ rows, tone, testId }: { rows: readonly ChangeRow[];
           </span>
           <span className="sy-change__text">
             <bdi className="sy-change__title">{row.title}</bdi>
-            {row.detail ? <bdi className="sy-change__detail">{row.detail}</bdi> : null}
+            {/* A line put together by the app ("old → new", day · hours · room): it reads in the
+                interface direction, and the values inside it are isolated where they are built. */}
+            {row.detail ? <span className="sy-change__detail">{row.detail}</span> : null}
           </span>
         </li>
       ))}

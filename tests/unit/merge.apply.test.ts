@@ -19,7 +19,7 @@ import {
   type ItemValue,
   type Resolution,
 } from '@shared/merge';
-import { ENTITY_LIST_KEY, datasetsEqual, entityList, removeEntity, sortEvents } from '@shared/model';
+import { ENTITY_LIST_KEY, countEntityUsage, datasetsEqual, entityList, removeEntity, sortEvents } from '@shared/model';
 import type {
   CourseInfo,
   Dataset,
@@ -1018,11 +1018,12 @@ describe('applyAsideItem', () => {
     expect(next.weeks[W1].events).toEqual([event('a', { teacherIds: ['t1'] })]);
   });
 
-  it('leaves the events that use a list entry untouched when my version is "deleted"', () => {
+  it('takes a list entry out of every event that uses it when my version is "deleted" (like removing it in Settings)', () => {
     const next = applyAsideItem(working, aside('teacher:t1', undefined, DANA));
     expect(next.config.teachers).toEqual([NOAM]);
-    expect(next.weeks).toBe(working.weeks);
-    expect(next.weeks[W1].events[0].teacherIds).toEqual(['t1']);
+    // No event may be left pointing at a teacher who is no longer in the list.
+    expect(next.weeks[W1].events[0].teacherIds).toEqual([]);
+    expect(countEntityUsage(next, 'teacher', 't1')).toBe(0);
   });
 
   it('touches nothing but its own item', () => {

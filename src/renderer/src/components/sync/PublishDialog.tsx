@@ -48,7 +48,7 @@ export function PublishDialog(): ReactNode {
         <ol>
           <li>
             <Icon name="user" size={14} />
-            <span className="user-text">{t('sync.publishStep1', { name: userName })}</span>
+            <span>{t('sync.publishStep1', { name: userName })}</span>
           </li>
           <li>
             <Icon name="cloud-up" size={14} />

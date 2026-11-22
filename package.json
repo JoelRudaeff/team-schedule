@@ -1,7 +1,7 @@
 {
   "name": "team-schedule",
   "productName": "Team Schedule",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Weekly team schedule (Hebrew / English) that syncs through a shared git repository",
   "private": true,
   "main": "./out/main/index.js",

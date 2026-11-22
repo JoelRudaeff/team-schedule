@@ -27,6 +27,7 @@ export {
   TextInput,
   TimeSelect,
 } from './controls';
+export { textDirection } from '../../lib/inputs';
 export { MenuButton, Modal, MultiSelect, Popover } from './overlays';
 export { ColorPicker } from './ColorPicker';
 export { BusyOverlay, ConfirmDialog, ErrorDialog, ToastHost } from './host';

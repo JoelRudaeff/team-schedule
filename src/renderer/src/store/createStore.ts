@@ -36,10 +36,14 @@ import {
 } from '@shared/merge';
 import {
   addEntity,
+  countEntityUsage,
   datasetsEqual,
+  entityList,
+  findEntity,
   findEntityByName,
   findEvent,
   matchesFilters,
+  referencedIds,
   removeEntity,
   removeEvent,
   setWeekTitle,
@@ -57,8 +61,10 @@ import {
   type Dataset,
   type EntityKind,
   type FileMap,
+  type Filters,
   type IsoDate,
   type Lang,
+  type ScheduleConfig,
 } from '@shared/types';
 import {
   WEEK_TEMPLATE_EXTENSION,
@@ -136,11 +142,36 @@ const ERROR_TEXT: Record<SyncError['code'], MessageKey> = {
   auth: 'store.errAuth',
   'not-found': 'store.errNotFound',
   'dubious-ownership': 'store.errDubious',
+  'branch-missing': 'store.errBranchMissing',
   timeout: 'store.errTimeout',
   'git-missing': 'store.errGitMissing',
   'invalid-url': 'store.errInvalidUrl',
   unknown: 'store.errUnknown',
 };
+
+const ENTITY_KINDS: readonly EntityKind[] = ['subject', 'location', 'teacher', 'class'];
+
+function isEntityKind(kind: string): kind is EntityKind {
+  return ENTITY_KINDS.some((known) => known === kind);
+}
+
+const FILTER_KIND = {
+  locationIds: 'location',
+  classIds: 'class',
+  teacherIds: 'teacher',
+  subjectIds: 'subject',
+} as const satisfies Record<keyof Filters, EntityKind>;
+
+/** `filters` without the ids of entries the lists no longer have; the same object when nothing had to go. */
+function prunedFilters(filters: Filters, config: ScheduleConfig): Filters {
+  let next = filters;
+  for (const key of Object.keys(FILTER_KIND) as (keyof Filters)[]) {
+    const known = new Set(entityList(config, FILTER_KIND[key]).map((entry) => entry.id));
+    if (filters[key].every((id) => known.has(id))) continue;
+    next = { ...next, [key]: filters[key].filter((id) => known.has(id)) };
+  }
+  return next;
+}
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -227,6 +258,10 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
   let persistDirty = false;
   let persistRunning: Promise<boolean> | null = null;
   let persistFailureShown = false;
+  /** The open event dialog holds text that is not part of the schedule yet (see setDraftDirty). */
+  let draftDirty = false;
+  /** The toast that offers to undo a deletion, and the undo step it belongs to. */
+  let undoToast: { id: number; step: UndoStep } | null = null;
 
   // ───────────────────────────── basics ─────────────────────────────
 
@@ -244,18 +279,33 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
     const base = next.base ?? state.base;
     const working = next.working ?? state.working;
     if (base === state.base && working === state.working) return {};
+    // A filter must never keep the id of an entry that is gone (removed here, or by the team):
+    // it would hide every event while looking switched off, and pre-fill new events with it.
+    const filters = prunedFilters(state.filters, working.config);
+    const filterPatch = filters === state.filters ? {} : { filters };
     const fresh = diffDatasets(base, working);
-    if (fresh.length === 0 && state.diff.length === 0) return { base, working };
-    return { base, working, diff: fresh, diffByKey: new Map(fresh.map((item) => [item.key, item])) };
+    if (fresh.length === 0 && state.diff.length === 0) return { base, working, ...filterPatch };
+    return { base, working, diff: fresh, diffByKey: new Map(fresh.map((item) => [item.key, item])), ...filterPatch };
   }
 
-  function toast(item: Omit<ToastItem, 'id'>): void {
-    const toasts = [...state.toasts, { ...item, id: ++toastSeq }];
+  /** Returns the id of the new toast. */
+  function toast(item: Omit<ToastItem, 'id'>): number {
+    const id = ++toastSeq;
+    const toasts = [...state.toasts, { ...item, id, dir: item.dir ?? dirOf(state.lang) }];
     while (toasts.length > MAX_TOASTS) {
       const droppable = toasts.findIndex((entry) => !entry.sticky);
       toasts.splice(droppable >= 0 ? droppable : 0, 1);
     }
     set({ toasts });
+    return id;
+  }
+
+  /** Takes the "Event deleted · Undo" toast away once its Undo would undo something else. */
+  function retireUndoToast(): void {
+    if (undoToast === null) return;
+    const { id } = undoToast;
+    undoToast = null;
+    if (state.toasts.some((entry) => entry.id === id)) set({ toasts: state.toasts.filter((entry) => entry.id !== id) });
   }
 
   function reportUnexpected(error: unknown): void {
@@ -329,6 +379,7 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
   }
 
   function clearHistory(): void {
+    retireUndoToast();
     undoStack = [];
     redoStack = [];
     set({ canUndo: false, canRedo: false });
@@ -562,10 +613,25 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
           await api.ackCloseRequest();
           // While a sync operation runs the window stays; the user can close again afterwards.
           if (exclusiveActive) return;
+          // Already asking: a second click on the window's X is not an answer.
+          if (state.dialog?.type === 'close-guard') return;
+          // A box that is still being typed in (the week's name, the course name) hands its text
+          // over when it loses the focus. Closing the window is no reason to lose that text.
+          // (It gets the focus straight back, so the keyboard stays where it was.)
+          const typingIn = document.activeElement;
+          if (typingIn instanceof HTMLElement && typingIn !== document.body) {
+            typingIn.blur();
+            typingIn.focus();
+          }
           const unpublished = state.phase === 'ready' && (state.diff.length > 0 || (state.sync?.ahead ?? 0) > 0);
-          if (unpublished) {
+          const draft = draftDirty && state.dialog?.type === 'event';
+          if (unpublished || draft) {
             await flush();
-            set({ dialog: { type: 'close-guard' } });
+            // The question is laid over whatever dialog is open; that dialog (and what was
+            // typed into it) is still there when the answer is "no, stay".
+            // Read afresh: the wait above may have seen another dialog open.
+            const covered = ((): DialogState | null => state.dialog)();
+            set({ dialog: { type: 'close-guard', covered: covered?.type === 'close-guard' ? covered.covered : covered, draft } });
           } else {
             await closeWhenSaved();
           }
@@ -606,6 +672,7 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
    */
   function commit(next: Dataset, asideAfter?: AsideItem[]): boolean {
     if (next === state.working && asideAfter === undefined) return false;
+    retireUndoToast();
     undoStack.push({ working: state.working, aside: state.aside });
     if (undoStack.length > UNDO_LIMIT) undoStack.shift();
     redoStack = [];
@@ -631,6 +698,10 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
     exclusiveActive = true;
     flowRounds = 0;
     try {
+      // Shown at once, also while a background check is still on its way: from this moment the
+      // dialogs are locked and nothing can be edited, so what the user confirmed is exactly
+      // what runs — never something they changed (or cancelled) while it was still waiting.
+      set({ busy: kind });
       if (checkPromise) await checkPromise;
       // "An update is available" and the like are stale the moment a sync operation starts.
       const toasts = state.toasts.filter((entry) => entry.sticky || entry.kind !== 'info');
@@ -683,6 +754,8 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
       mode,
       note,
       remoteSha: team.sha,
+      base: state.base,
+      mine: state.working,
       theirs: team.parsed.dataset,
       theirProblems: team.parsed.problems,
       theirPassthrough: team.parsed.passthrough,
@@ -691,6 +764,11 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
       incoming,
       changedAgain,
     };
+  }
+
+  /** False once the schedule on screen is no longer the one the merge overview was computed from. */
+  function isCurrent(session: MergeSession): boolean {
+    return session.base === state.base && session.mine === state.working;
   }
 
   /**
@@ -705,6 +783,10 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
     for (const note of notes) {
       if (note.code === 'entity-restored') {
         toast({ kind: 'info', message: t('store.noteRestored', { kind: t(KIND_LABEL[note.kind]), name: note.name }) });
+      } else if (note.code === 'entity-merged') {
+        toast({ kind: 'info', message: t('store.noteMerged', { kind: t(KIND_LABEL[note.kind]), name: note.name }) });
+      } else if (note.code === 'course-dates-reset') {
+        toast({ kind: 'warning', message: t('store.noteCourseDates') });
       } else {
         toast({ kind: 'info', message: t('store.noteTimeGrid') });
       }
@@ -755,7 +837,7 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
     }
 
     const merged = applyMerge({
-      mine: state.working,
+      mine: session.mine,
       theirs: session.theirs,
       result: session.result,
       resolutions,
@@ -1030,7 +1112,21 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
 
     deleteEvent(weekStart, eventId) {
       if (isReadOnly(weekStart)) return;
-      commit(removeEvent(state.working, weekStart, eventId));
+      if (!commit(removeEvent(state.working, weekStart, eventId))) return;
+      // The offer to undo belongs to this very step: it disappears with the next change, so
+      // its button can never undo something else instead.
+      const step = undoStack[undoStack.length - 1];
+      const id = toast({
+        kind: 'info',
+        message: t('grid.deleted'),
+        action: {
+          label: t('grid.undo'),
+          run: () => {
+            if (undoStack[undoStack.length - 1] === step) actions.undo();
+          },
+        },
+      });
+      undoToast = { id, step };
     },
 
     duplicateEvent(weekStart, eventId) {
@@ -1080,6 +1176,7 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
     undo() {
       const previous = undoStack.pop();
       if (!previous) return;
+      retireUndoToast();
       redoStack.push({ working: state.working, aside: state.aside });
       publishWorking(previous.working, previous.aside);
     },
@@ -1087,6 +1184,7 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
     redo() {
       const next = redoStack.pop();
       if (!next) return;
+      retireUndoToast();
       undoStack.push({ working: state.working, aside: state.aside });
       publishWorking(next.working, next.aside);
     },
@@ -1098,7 +1196,16 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
     },
 
     closeDialog() {
-      if (state.dialog !== null) set({ dialog: null });
+      if (state.dialog === null) return;
+      // A save or merge that is already running cannot be called off by closing its dialog:
+      // the dialog stays until the operation has finished and said how it went.
+      if (exclusiveActive && (state.dialog.type === 'publish' || state.dialog.type === 'merge')) return;
+      // Answering "close the window?" with no brings back the dialog it covered, as it was.
+      set({ dialog: state.dialog.type === 'close-guard' ? state.dialog.covered : null });
+    },
+
+    setDraftDirty(dirty) {
+      draftDirty = dirty;
     },
 
     toast,
@@ -1123,8 +1230,17 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
           setSync(status);
           // Something outside the app moved the local copy: what is on screen may be stale.
           if (previous && (previous.baseSha !== status.baseSha || previous.headSha !== status.headSha)) {
-            await flush();
-            await reloadSnapshot();
+            // The user keeps working during a background check. Should an edit arrive while the
+            // files are being read, what was read is already out of date: read again.
+            for (let attempt = 0; attempt < 3; attempt++) {
+              await flush();
+              const before = state.working;
+              const snapshot = await api.loadSnapshot();
+              if (state.working !== before) continue;
+              // Undo steps from before would bring back a schedule that no longer matches the files.
+              if (await applySnapshot(snapshot)) clearHistory();
+              break;
+            }
           }
           if (status.fetchError) {
             if (!silent) toastSyncError(status.fetchError);
@@ -1179,6 +1295,13 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
       const publishing = session.mode === 'publish' && choice.then === 'publish';
       return exclusive(publishing ? 'publishing' : 'updating', async () => {
         await flush();
+        if (!isCurrent(session)) {
+          // The schedule changed after the overview was drawn (an undo, a reload after something
+          // outside the app moved the local copy …). A decision made on the old picture is
+          // never applied to the new one: the overview is built again and the user decides again.
+          toast({ kind: 'warning', message: t('store.mergeOutdated') });
+          return session.mode === 'publish' ? publishFlow(session.note, true) : updateFlow(true);
+        }
         await finishMerge(session, choice);
       });
     },
@@ -1199,12 +1322,61 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
       const item = state.aside.find((entry) => entry.key === key);
       if (!item) return;
       if (item.weekStart && isReadOnly(item.weekStart)) return;
-      // One undo step for both halves: undoing brings back the team's version AND the kept-aside entry.
-      commit(
-        applyAsideItem(state.working, item),
-        state.aside.filter((entry) => entry.key !== key),
-      );
-      toast({ kind: 'success', message: t('store.asideApplied') });
+
+      const apply = (): void => {
+        const before = state.working;
+        const next = applyAsideItem(before, item);
+        if (next === before) {
+          // My version cannot be part of this schedule any more (hours or dates that no longer
+          // fit together). It stays in the list; saying "it is back" would not be true.
+          toast({ kind: 'warning', message: t('store.asideCannotApply') });
+          return;
+        }
+        // One undo step for both halves: undoing brings back the team's version AND the kept-aside entry.
+        commit(
+          next,
+          state.aside.filter((entry) => entry.key !== key),
+        );
+        toast({ kind: 'success', message: t('store.asideApplied') });
+        for (const kind of ENTITY_KINDS) {
+          for (const entry of entityList(next.config, kind)) {
+            const restored = !findEntity(before.config, kind, entry.id) && !(item.kind === kind && item.id === entry.id);
+            if (restored) toast({ kind: 'info', message: t('store.noteRestored', { kind: t(KIND_LABEL[kind]), name: entry.name }) });
+          }
+        }
+        const event = item.kind === 'event' && item.id && item.weekStart ? findEvent(next, item.weekStart, item.id) : undefined;
+        const mine = item.mine;
+        if (event && typeof mine === 'object' && mine !== null && 'teacherIds' in mine) {
+          const dropped = ENTITY_KINDS.some((kind) => referencedIds(mine, kind).length > referencedIds(event, kind).length);
+          if (dropped) toast({ kind: 'info', message: t('store.asideRefsDropped') });
+        }
+      };
+
+      // My version is "this entry is deleted": using it takes the entry out of every event,
+      // exactly like removing it in Settings — and like there, only after the user has seen how many.
+      const usage =
+        isEntityKind(item.kind) && item.id !== undefined && item.mine === undefined
+          ? countEntityUsage(state.working, item.kind, item.id)
+          : 0;
+      if (usage === 0) {
+        apply();
+        return;
+      }
+      const listOpen = state.dialog?.type === 'aside';
+      const entry = isEntityKind(item.kind) ? findEntity(state.working.config, item.kind, item.id ?? null) : undefined;
+      set({
+        dialog: {
+          type: 'confirm',
+          title: t('settings.removeTitle', { name: entry?.name ?? '' }),
+          message: tn('settings.removeText', usage),
+          confirmLabel: t('common.remove'),
+          danger: true,
+          onConfirm: () => {
+            apply();
+            if (listOpen && state.aside.length > 0) set({ dialog: { type: 'aside' } });
+          },
+        },
+      });
     },
 
     discardAside(key) {
@@ -1218,8 +1390,9 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
       void saveAside(aside);
     },
 
-    ensureBlame(weekStart) {
+    ensureBlame(weekStart, retries = 0) {
       if (state.phase !== 'ready' || !state.sync) return;
+      let outdated = false;
       const headSha = state.sync.headSha;
       const cached = state.blame[weekStart];
       if ((cached && cached.headSha === headSha) || blameInFlight.has(weekStart)) return;
@@ -1227,11 +1400,16 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
       void api
         .blame(weekStart)
         .then((blame) => {
-          // An answer for a version that is no longer current would only be thrown away again.
+          // An answer for a version that is no longer current is of no use …
           if (blame.headSha === (state.sync?.headSha ?? null)) set({ blame: { ...state.blame, [weekStart]: blame } });
+          else outdated = true;
         })
         .catch((error: unknown) => console.warn('git blame failed:', error))
-        .finally(() => blameInFlight.delete(weekStart));
+        .finally(() => {
+          blameInFlight.delete(weekStart);
+          // … so the question is asked again for the version that is current now.
+          if (outdated && retries < 2) actions.ensureBlame(weekStart, retries + 1);
+        });
     },
 
     // ── set-up and local settings ──
@@ -1423,7 +1601,7 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
           content: serializeWeekTemplate(template),
         });
         if (!saved) return null;
-        toast({ kind: 'success', message: t('store.exportWeekDone') });
+        toast({ kind: 'success', message: tn('store.exportWeekDone', template.events.length) });
         return saved.path;
       } catch (error) {
         reportUnexpected(error);
@@ -1465,6 +1643,8 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
       if (result.created.classes > 0) created.push(`${t('common.classes')} ${result.created.classes}`);
       const parts = [tn('store.importDone', result.eventCount)];
       if (created.length > 0) parts.push(t('store.importCreated', { list: created.join(', ') }));
+      if (result.snapped > 0) parts.push(tn('store.importSnapped', result.snapped));
+      if (result.shortened > 0) parts.push(tn('store.importShortened', result.shortened));
       toast({ kind: 'success', message: parts.join(' ') });
       return result;
     },

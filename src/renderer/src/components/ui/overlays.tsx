@@ -12,6 +12,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../../i18n/useT';
+import { textDirection } from '../../lib/inputs';
 import { Button, ColorDot, IconButton } from './controls';
 import { Icon } from './icons';
 import type { MenuButtonProps, ModalProps, MultiSelectProps, PopoverProps } from './types';
@@ -264,6 +265,53 @@ export function Popover({
     return () => document.removeEventListener('pointerdown', onPointerDown, true);
   }, [shown, anchor, onClose]);
 
+  // ── Keyboard: into the panel when it opens, kept inside while it is open, back afterwards ──
+  // The panel is drawn outside the dialog or toolbar it belongs to, so without this the Tab
+  // key never reaches it: a teacher could not be ticked, a colour not be chosen.
+  const focusMoved = useRef(false);
+  useEffect(() => {
+    if (!shown) {
+      focusMoved.current = false;
+      return;
+    }
+    const panel = panelRef.current;
+    // Not before the panel has its place: an invisible element cannot take the focus.
+    if (!panel || position === null || focusMoved.current) return;
+    focusMoved.current = true;
+    const preferred = panel.querySelector<HTMLElement>('[data-autofocus], [autofocus]');
+    (preferred ?? focusablesIn(panel)[0] ?? panel).focus({ preventScroll: true });
+  }, [shown, position]);
+
+  useEffect(() => {
+    if (!shown || !anchor) return;
+    return () => {
+      // Closed: the keyboard goes back to where it came from, unless the user has already
+      // put the focus somewhere else (a click on another control).
+      const active = document.activeElement;
+      if (document.contains(anchor) && (active === null || active === document.body)) anchor.focus({ preventScroll: true });
+    };
+  }, [shown, anchor]);
+
+  const keepFocusInside = (event: KeyboardEvent<HTMLDivElement>): void => {
+    const panel = panelRef.current;
+    if (event.key !== 'Tab' || event.defaultPrevented || !panel) return;
+    const items = focusablesIn(panel);
+    if (items.length === 0) {
+      event.preventDefault();
+      return;
+    }
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || active === panel)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
   if (!shown) return null;
   return createPortal(
     <div
@@ -271,6 +319,8 @@ export function Popover({
       className={cx('ui-popover', className)}
       role="dialog"
       aria-label={ariaLabel}
+      tabIndex={-1}
+      onKeyDown={keepFocusInside}
       style={{
         left: position?.left ?? 0,
         top: position?.top ?? 0,
@@ -478,17 +528,29 @@ export function MultiSelect({
       </button>
     );
 
+  /** Arrow keys walk through the choices (from a text box of the panel: into the list). */
+  const walkList = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    const boxes = [...event.currentTarget.querySelectorAll<HTMLInputElement>('.ui-multi__option input')];
+    if (boxes.length === 0) return;
+    const index = boxes.findIndex((box) => box === document.activeElement);
+    const down = event.key === 'ArrowDown';
+    const next = index < 0 ? (down ? 0 : boxes.length - 1) : (index + (down ? 1 : boxes.length - 1)) % boxes.length;
+    event.preventDefault();
+    boxes[next].focus();
+  };
+
   return (
     <>
       {trigger}
       <Popover anchor={anchor} open={open} onClose={close} matchWidth ariaLabel={label} testId={testId ? `${testId}-panel` : undefined}>
-        <div className="ui-multi">
+        <div className="ui-multi" onKeyDown={walkList}>
           {showSearch ? (
             <div className="ui-multi__search">
               <Icon name="search" size={14} />
               <input
                 type="text"
-                dir="auto"
+                dir={textDirection(query)}
                 value={query}
                 placeholder={t('ui.search')}
                 aria-label={t('ui.search')}
@@ -523,7 +585,7 @@ export function MultiSelect({
             <div className="ui-multi__create">
               <input
                 type="text"
-                dir="auto"
+                dir={textDirection(draft)}
                 value={draft}
                 placeholder={createLabel ?? t('ui.addNew')}
                 aria-label={createLabel ?? t('ui.addNew')}

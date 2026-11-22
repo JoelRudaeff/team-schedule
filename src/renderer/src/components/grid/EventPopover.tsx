@@ -19,7 +19,7 @@ export function BlameLine({ info, prefix }: { info: BlameInfo; prefix: MessageKe
       <Icon name="history" size={14} />
       <div>
         <div>
-          <span className="user-text">{t(prefix, { name: info.authorName })}</span>
+          <span>{t(prefix, { name: info.authorName })}</span>
           <span className="faint" title={formatDateTime(info.time, lang)}>
             {' · '}
             {formatRelative(info.time, lang)}
@@ -65,12 +65,19 @@ export function EventPopover({ anchor, weekStart, event, weekEvents, clashes, re
   const remove = (): void => {
     onClose();
     actions.deleteEvent(weekStart, event.id);
-    actions.toast({ kind: 'info', message: t('grid.deleted'), action: { label: t('grid.undo'), run: () => actions.undo() } });
   };
 
   return (
     <Popover anchor={anchor} open onClose={onClose} placement="side-end" ariaLabel={t('grid.eventDetails')} testId="event-popover">
-      <div className="wg-pop">
+      <div
+        className="wg-pop"
+        // The details now hold the keyboard focus, so the Delete key is answered here as it is on the event itself.
+        onKeyDown={(e) => {
+          if (e.key !== 'Delete' || readOnly) return;
+          e.preventDefault();
+          remove();
+        }}
+      >
         <div className="wg-pop__head">
           <ColorDot color={eventColor(event, config)} size={12} />
           <h3 className="user-text">{eventHeadline(event, config, t('common.untitledEvent'))}</h3>
@@ -90,9 +97,7 @@ export function EventPopover({ anchor, weekStart, event, weekEvents, clashes, re
               <Icon name="warning" size={14} /> {t('grid.clashTitle')}
             </strong>
             {clashLines.map((line) => (
-              <span key={line} className="user-text">
-                {line}
-              </span>
+              <span key={line}>{line}</span>
             ))}
           </div>
         ) : null}

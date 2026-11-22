@@ -30,12 +30,16 @@ export const setup = {
   userEmailInvalid: 'Enter a valid e-mail address.',
   advanced: 'Advanced',
   branch: 'Branch',
-  branchHint: 'Leave empty to use the repository\'s default branch.',
+  branchHint: 'Leave empty to use the repository\'s default branch. The whole team must use the same branch.',
   connect: 'Connect',
   connectFailed: 'Could not connect',
   trustText:
     'Git refuses to use this folder because another Windows user owns it. This is normal for a shared folder; you can tell Git to trust it.',
   trustAndRetry: 'Trust this folder and try again',
+  branchesHere: 'Branches in this repository: {list}',
+  branchMissingText:
+    'If the name was mistyped, correct it and connect again. Create the branch only if you really want a separate schedule that the rest of the team does not see.',
+  createBranch: 'Create this branch',
 
   createTitle: 'Create the team schedule',
   createText: 'The repository "{name}" is connected, but it does not contain a schedule yet.',

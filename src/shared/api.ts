@@ -89,6 +89,12 @@ export type SyncErrorCode =
   | 'not-found'
   /** git refuses a folder owned by another Windows user (typical for shared folders). */
   | 'dubious-ownership'
+  /**
+   * The branch named in the connect request does not exist in the repository, which has
+   * other branches (`detail` lists them). Nothing was changed; connecting again with
+   * `createBranch` creates it.
+   */
+  | 'branch-missing'
   /** git did not finish in time and was stopped. */
   | 'timeout'
   | 'unknown';
@@ -101,6 +107,8 @@ export interface SyncError {
   detail: string;
   /** For `dubious-ownership`: the folder git asks to be trusted (pass to `trustRepoPath`). */
   trustPath?: string;
+  /** For `branch-missing`: the branches the repository does have. */
+  branches?: string[];
 }
 
 export interface CommitInfo {
@@ -166,6 +174,12 @@ export interface ConnectRequest {
   branch: string | null;
   userName: string;
   userEmail: string;
+  /**
+   * Create `branch` when the repository has other branches but not this one. Without it
+   * such a request fails with `branch-missing`: a mistyped name must never quietly start a
+   * second schedule next to the team's.
+   */
+  createBranch?: boolean;
 }
 
 export type ConnectResult =

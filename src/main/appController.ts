@@ -57,6 +57,7 @@ export type RepoHandle = Pick<
   | 'dir'
   | 'url'
   | 'branch'
+  | 'idle'
   | 'setIdentity'
   | 'hasSchedule'
   | 'fetch'
@@ -275,9 +276,18 @@ export class AppController implements ApiHandlers {
       const runner = this.runner;
       if (!runner) return refusal('git-missing', 'Git was not found on this computer');
       const dir = this.store.repoDir(address.url);
+      // A check for updates that is still waiting for the server works in the same folder: let it finish first.
+      await this.service?.idle();
       let outcome: Awaited<ReturnType<GitLayer['connect']>>;
       try {
-        outcome = await this.git.connect(runner, { url: address.url, dir, branch, userName, userEmail });
+        outcome = await this.git.connect(runner, {
+          url: address.url,
+          dir,
+          branch,
+          userName,
+          userEmail,
+          ...(req.createBranch === true ? { createBranch: true } : {}),
+        });
       } catch (error) {
         // Unreachable, sign-in refused, no such repository …: the previous connection (if any) stays in use.
         if (error instanceof GitError) return { ok: false, error: error.toSyncError() };
@@ -322,7 +332,11 @@ export class AppController implements ApiHandlers {
   // ── sync ──
 
   async fetch(opts: { interactive: boolean }): Promise<SyncStatus> {
-    return this.withRepo((service) => service.fetch(opts.interactive));
+    // Only STARTED in its turn. The wait for the server happens outside the queue, so that
+    // nothing else — above all writing edits to the working folder — is held up by a server
+    // that does not answer. The service itself keeps its network commands apart.
+    const started = await this.withRepo(async (service) => ({ status: service.fetch(opts.interactive) }));
+    return started.status;
   }
 
   async applyUpdate(req: ApplyUpdateRequest): Promise<UpdateResult> {
@@ -440,6 +454,8 @@ export class AppController implements ApiHandlers {
    * makes it the current one — or leaves none. Only to be called as a job of `repoQueue`.
    */
   private async openStoredRepo(): Promise<{ phase: RepoPhase; repo: RepoInfo | null }> {
+    // The service being replaced may still be waiting for the server in the very same folder.
+    await this.service?.idle();
     this.service = null;
     const { repoUrl, branch } = await this.store.getSettings();
     if (!this.runner || repoUrl === null || branch === null) return NOT_CONFIGURED;

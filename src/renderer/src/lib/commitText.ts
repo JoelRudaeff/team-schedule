@@ -16,7 +16,7 @@ function countAfter(sign: '+' | '~' | '-', text: string): number {
  * is put into words in the interface language.
  */
 export function readableCommitSubject(subject: string, tr: Translator): string {
-  const { t } = tr;
+  const { t, tn } = tr;
   if (AUTO_CREATE.test(subject)) return t('toolbar.commitCreated');
   const match = AUTO_UPDATE.exec(subject);
   if (!match) return subject;
@@ -29,9 +29,9 @@ export function readableCommitSubject(subject: string, tr: Translator): string {
     const added = countAfter('+', events[1]);
     const changed = countAfter('~', events[1]);
     const removed = countAfter('-', events[1]);
-    if (added > 0) bits.push(t('toolbar.commitAdded', { count: added }));
-    if (changed > 0) bits.push(t('toolbar.commitChanged', { count: changed }));
-    if (removed > 0) bits.push(t('toolbar.commitRemoved', { count: removed }));
+    if (added > 0) bits.push(tn('toolbar.commitAdded', added));
+    if (changed > 0) bits.push(tn('toolbar.commitChanged', changed));
+    if (removed > 0) bits.push(tn('toolbar.commitRemoved', removed));
     parts.push(`${t('toolbar.commitEvents')}: ${bits.join(', ')}`);
   }
   if (/week title/.test(detail)) parts.push(t('toolbar.commitWeekNames'));

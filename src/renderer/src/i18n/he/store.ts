@@ -26,6 +26,7 @@ export const store: StoreMessages = {
   errAuth: 'נדרשת התחברות, או שאין הרשאת גישה למאגר הצוות.',
   errNotFound: 'מאגר הצוות לא נמצא. כדאי לבדוק את הכתובת בהגדרות.',
   errDubious: 'Git אינו סומך על תיקיית המאגר כי היא שייכת למשתמש Windows אחר.',
+  errBranchMissing: 'במאגר הזה אין ענף בשם הזה.',
   errTimeout: 'מאגר הצוות לא הגיב בזמן.',
   errGitMissing: 'Git לא נמצא במחשב הזה.',
   errInvalidUrl: 'כתובת המאגר אינה תקינה.',
@@ -61,6 +62,9 @@ export const store: StoreMessages = {
   branchMissing: 'הענף של הצוות אינו קיים עוד בשרת, ולכן אין מה לעדכן. שמירה תיצור אותו מחדש מהעותק שלך.',
   noteRestored: 'הפריט ״{name}״ ({kind}) לא הוסר מהרשימה, כי יש אירוע שעדיין משויך אליו.',
   noteTimeGrid: 'שעות היום נלקחו מהגרסה של הצוות.',
+  noteCourseDates: 'תאריכי הקורס שלך ושל הצוות לא התיישבו יחד (הקורס היה מסתיים לפני שהתחיל), ולכן נשמרו התאריכים של הצוות.',
+  noteMerged: 'הפריט ״{name}״ ({kind}) נוסף פעמיים, אצלך ובצוות. האירועים שלך משויכים עכשיו לפריט של הצוות.',
+  mergeOutdated: 'הלו״ז השתנה אחרי שהתמונה הזו הוצגה, ולכן היא נבנתה מחדש. צריך להחליט שוב.',
 
   // publish
   nothingToPublish: 'אין מה לשמור: אין שינויים שטרם פורסמו.',
@@ -71,6 +75,8 @@ export const store: StoreMessages = {
 
   // kept aside
   asideApplied: 'הגרסה שלך חזרה ללו״ז (טרם פורסמה).',
+  asideCannotApply: 'הגרסה הזו כבר לא מתאימה ללו״ז (השעות או התאריכים שבה סותרים את הנוכחיים), ולכן היא נשארת ברשימה.',
+  asideRefsDropped: 'משהו שהגרסה הזו השתמשה בו (מורה, כיתה, מיקום או נושא) כבר לא קיים, ולכן הושמט.',
 
   // first schedule
   scheduleCreated: 'הלו״ז נוצר ושותף עם הצוות.',
@@ -85,13 +91,18 @@ export const store: StoreMessages = {
   exportIcsDone_other: '{count} אירועים יוצאו.',
   actionOpen: 'פתיחה',
   exportWeekTitle: 'שמירת שבוע לקובץ',
-  exportWeekDone: 'השבוע נשמר לקובץ.',
+  exportWeekDone_one: 'השבוע כולו נשמר לקובץ (אירוע אחד).',
+  exportWeekDone_other: 'השבוע כולו נשמר לקובץ ({count} אירועים).',
   importWeekTitle: 'טעינת שבוע מקובץ',
   importInvalid: 'זה אינו קובץ שבוע תקין.',
   importNewer: 'קובץ השבוע נשמר בגרסה חדשה יותר של התוכנה.',
   importDone_one: 'אירוע אחד נטען לשבוע.',
   importDone_other: '{count} אירועים נטענו לשבוע.',
   importCreated: 'נוספו פריטים חדשים לרשימות: {list}.',
+  importSnapped_one: 'באירוע אחד השעה לא הייתה על רבע שעה עגול, והיא הוזזה לרבע השעה הקרוב.',
+  importSnapped_other: 'ב-{count} אירועים השעות לא היו על רבע שעה עגול, והן הוזזו לרבע השעה הקרוב.',
+  importShortened_one: 'טקסט אחד היה ארוך ממה שהלו״ז מאפשר, ולכן קוצר.',
+  importShortened_other: '{count} טקסטים היו ארוכים ממה שהלו״ז מאפשר, ולכן קוצרו.',
   fileFilterWeek: 'קובץ שבוע',
   fileFilterIcs: 'קובץ יומן',
   icsTeachers: 'מורים',

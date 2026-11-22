@@ -119,6 +119,14 @@ import {
   type WeekData,
 } from './types';
 
+/**
+ * How the main process hands over a data file that is NOT UTF-8 text (saved by another
+ * program as UTF-16 or in a Windows code page): this marker followed by the file's bytes in
+ * base64. Such a content is never parsed; it is reported as unreadable and kept exactly as
+ * it is, so writing it back restores the very same bytes. No JSON file starts like this.
+ */
+export const RAW_BYTES_PREFIX = `${String.fromCharCode(0)}team-schedule-bytes:`;
+
 /** Grid used for new schedules and when schedule.json has no timeGrid: 08:00–20:00, 30-minute rows. */
 export const DEFAULT_TIME_GRID = { dayStart: 480, dayEnd: 1200, slotMinutes: 30 } as const;
 
@@ -493,6 +501,10 @@ export function filesToDataset(files: FileMap): ParsedFiles {
   function read<T>(path: string, parse: (text: string) => T): T | null {
     const text = files[path];
     try {
+      if (text.startsWith(RAW_BYTES_PREFIX)) {
+        const file = path === CONFIG_PATH ? CONFIG_FILE : WEEK_FILE;
+        throw new DataFormatError('invalid', `${file}: not a UTF-8 text file (it was saved by another program in another encoding)`);
+      }
       return parse(text);
     } catch (error) {
       // Not limited to DataFormatError on purpose: whatever goes wrong while reading one

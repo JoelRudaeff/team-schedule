@@ -126,6 +126,9 @@ export const sync = {
     'Your {count} change is stored on this computer and will still be here next time, but the team cannot see it until you save.',
   closeText_other:
     'Your {count} changes are stored on this computer and will still be here next time, but the team cannot see them until you save.',
+  closeDraftTitle: 'An event is still being edited',
+  closeDraftText: 'The event you are writing has not been added to the schedule yet. Closing now throws away what you typed.',
+  closeBack: 'Go back',
   closeSaveNow: 'Save to the team now',
   closeAnyway: 'Close anyway',
 };

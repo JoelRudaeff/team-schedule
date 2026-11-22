@@ -122,6 +122,8 @@ test('Dana is told about the update, collides with it, and keeps her version asi
     await expect(page.getByTestId('merge-dialog')).toBeVisible({ timeout: 60_000 });
     await expect(page.getByTestId('conflict-card')).toHaveCount(1);
     await expect(page.getByTestId('merge-graph')).toBeVisible();
+    // The keyboard starts on the choice that is selected, so Enter confirms what is shown as chosen.
+    await expect(page.locator('[data-testid^="merge-option-"][aria-checked="true"]')).toBeFocused();
     await shot(page, '11-merge-dialog');
 
     // Cancelling changes nothing; the same overview comes back, this time in Hebrew.

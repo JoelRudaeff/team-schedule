@@ -7,6 +7,7 @@
  */
 import { addDays, isoToLocalNoon, minutesToHHMM } from '@shared/dates';
 import type { DayIndex, IsoDate, Lang, Minutes } from '@shared/types';
+import { translate, translatePlural } from '../i18n';
 
 /** BCP-47 locale per UI language. en-GB gives day-month order and 24-hour time. */
 export function localeOf(lang: Lang): string {
@@ -97,27 +98,23 @@ export function formatClock(epochMs: number, lang: Lang): string {
   return fmt(lang, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(epochMs));
 }
 
-const relCache = new Map<Lang, Intl.RelativeTimeFormat>();
-
-/** "3 minutes ago", "yesterday", "לפני 3 דקות", "אתמול" … */
+/**
+ * How long ago an instant was: "3 minutes ago", "yesterday", "לפני שעתיים", "אתמול" …
+ * The words come from the app's own tables (i18n `time`), not from the system: the runtime's
+ * Hebrew reads "לפני שעה (1)". An instant that lies ahead (a teammate's clock runs fast)
+ * reads "just now": "in 3 minutes" would be nonsense for something that already happened.
+ */
 export function formatRelative(epochMs: number, lang: Lang, nowMs: number = Date.now()): string {
-  let rtf = relCache.get(lang);
-  if (!rtf) {
-    rtf = new Intl.RelativeTimeFormat(localeOf(lang), { numeric: 'auto' });
-    relCache.set(lang, rtf);
-  }
-  const diffSec = Math.round((epochMs - nowMs) / 1000);
-  const abs = Math.abs(diffSec);
-  const sign = diffSec < 0 ? -1 : 1;
-  if (abs < 45) return rtf.format(0, 'second');
+  const seconds = Math.round((nowMs - epochMs) / 1000);
+  if (seconds < 45) return translate(lang, 'time.now');
   // Each unit is used only while its ROUNDED count stays below the next unit: never "60 minutes ago".
-  const minutes = Math.round(abs / 60);
-  if (minutes < 60) return rtf.format(sign * minutes, 'minute');
-  const hours = Math.round(abs / 3600);
-  if (hours < 24) return rtf.format(sign * hours, 'hour');
-  const days = Math.round(abs / 86_400);
-  if (days < 30) return rtf.format(sign * days, 'day');
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return translatePlural(lang, 'time.minutesAgo', minutes);
+  const hours = Math.round(seconds / 3600);
+  if (hours < 24) return translatePlural(lang, 'time.hoursAgo', hours);
+  const days = Math.round(seconds / 86_400);
+  if (days < 30) return translatePlural(lang, 'time.daysAgo', days);
   const months = Math.round(days / 30);
-  if (months < 12) return rtf.format(sign * months, 'month');
-  return rtf.format(sign * Math.max(1, Math.round(days / 365)), 'year');
+  if (months < 12) return translatePlural(lang, 'time.monthsAgo', months);
+  return translatePlural(lang, 'time.yearsAgo', Math.max(1, Math.round(days / 365)));
 }

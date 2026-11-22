@@ -50,7 +50,9 @@ GitHub, GitLab, or simply a folder on a shared drive). Each computer keeps its o
   - **Update and keep mine aside** – the team's version goes into the schedule and yours
     stays next to it as a dashed "kept aside" event, to decide later.
   - or decide **one by one**.
-- **Who changed what** – every event shows who last edited it and when (`git blame`).
+- **Who changed what** – every event shows who last edited it and when. This comes from the
+  git history ("git blame"), compared event by event: adding or removing a lesson next to
+  another one does not change who "last edited" that other one.
 - **Filters** – show the whole week for one location, class, teacher or subject.
 - **Lists you manage** – locations, teachers, classes, and subjects. A subject is a colour
   with a name: pick any RGB colour and call it what you need.
@@ -59,7 +61,13 @@ GitHub, GitLab, or simply a folder on a shared drive). Each computer keeps its o
 - **Weeks** – name each week, move with the arrows or jump by **week number**. With a course
   start date the weeks are numbered from the first week of the course ("Week 4 of 13").
 - **Repeat** – copy a week into the following weeks, or save it to a **week file** and load
-  it again later (even into another team's schedule).
+  it again later (even into another team's schedule). A week file always holds the whole
+  week, whatever filter is on. A file from elsewhere is held to the rules of the editor when
+  it is loaded: times land on the quarter hour and over-long texts are cut, and the app says so.
+- **Keyboard** – everything works without the mouse: `Tab` and the arrow keys move, `Enter`
+  opens an event, `Delete` removes it (with *Undo*), `Ctrl+S` saves to the team,
+  `PageUp` / `PageDown` change the week, `Esc` closes — and asks first when something you
+  typed would be lost.
 - **Outlook** – export a week, a date range or the whole course to an `.ics` calendar file
   that Outlook, Google Calendar and Apple Calendar open.
 
@@ -70,8 +78,8 @@ GitHub, GitLab, or simply a folder on a shared drive). Each computer keeps its o
 - Windows 10 or 11
 - [Git for Windows](https://git-scm.com/download/win) (the app uses it to talk to the
   repository; sign-in is handled by Git's own credential window)
-- Team Schedule itself: the installer `TeamSchedule-Setup-1.0.0.exe`, or the single-file
-  `TeamSchedule-Portable-1.0.0.exe` that needs no installation. Both are built from this
+- Team Schedule itself: the installer `TeamSchedule-Setup-1.0.1.exe`, or the single-file
+  `TeamSchedule-Portable-1.0.1.exe` that needs no installation. Both are built from this
   repository with one command (see [For developers](#for-developers)) and land in `dist\`;
   hand them to the team any way you like. The files are not signed, so Windows SmartScreen
   may ask once: choose *More info → Run anyway*.
@@ -94,7 +102,10 @@ Any empty git repository that the whole team can reach works. Two common choices
 ### 3. First start
 
 1. Choose the language, paste the repository address, enter your name and e-mail (they are
-   shown to teammates next to your changes) and press **Connect**.
+   shown to teammates next to your changes) and press **Connect**. (*Advanced → Branch* is
+   only for a team that keeps several schedules in one repository. A branch name the
+   repository does not have is refused and the existing ones are listed, so a typing
+   mistake cannot quietly split you off from the team.)
 2. The first person is offered to **create the schedule** (course name and, optionally, the
    course start and end dates). Everybody after that just connects and sees it.
 3. Open **Settings** to add locations, teachers, classes and subjects, and to set the hours
@@ -109,8 +120,9 @@ schedule.json            course dates, hours of the day, subjects, locations, te
 weeks/2026-11-22.json    one file per week, named after its Sunday, one event per line
 ```
 
-One event per line is what makes `git blame` meaningful (each event has a last editor) and
-keeps the history readable in any git tool. The app never lets git merge text: it compares
+One event per line keeps the history readable in any git tool. For "who last edited this
+event" the app compares the versions of a week event by event; a line-based `git blame`
+would also name whoever merely added the next line. The app never lets git merge text: it compares
 the three versions (last shared, yours, the team's) event by event and field by field, so
 two people editing different events — or different fields of the same event — never collide.
 
@@ -126,9 +138,19 @@ the versions "kept aside". They are stored in `%APPDATA%\Team Schedule`.
   overview appears, and your work stays unpublished until you decide.
 - A version you did not choose in a collision is not thrown away unless you say so: "keep
   aside" stores it on your computer and shows it on the grid until you apply or discard it.
-- A schedule file the app cannot read (damaged, or written by a newer version) is never
-  rewritten, deleted or published. The week is shown as the team has it and is locked for
-  editing; *Restore the team's version* repairs a file that was damaged on your computer.
+- A schedule file the app cannot read (damaged, written by a newer version, or saved by
+  another program in another text encoding) is never rewritten, deleted or published: it is
+  kept byte for byte. The week is shown as the team has it and is locked for editing;
+  *Restore the team's version* repairs a file that was damaged on your computer.
+- What you confirm is exactly what happens. Once a save or a merge decision is confirmed,
+  the window is busy until it is done; and a decision made on an overview that has gone out
+  of date is not applied — the overview is drawn again.
+- Closing the window over a half-written event asks first, and *Go back* returns to it as
+  it was. So does `Esc` in an event you have changed.
+- If somebody undoes a save on the server (moves the branch back), the other computers see
+  an update to follow — not "unpublished changes" that would publish the mistake again.
+- Two people who add the same room, teacher or class end up with one entry, not two: on
+  the next update yours is folded into the team's, and your lessons point to it.
 
 ## Troubleshooting
 
@@ -136,7 +158,9 @@ the versions "kept aside". They are stored in `%APPDATA%\Team Schedule`.
 | --- | --- |
 | "Git is not installed" | Install Git for Windows, then press *Check again* (or *Locate git.exe…*). |
 | "Sign-in needed" | Press *Sign in* / the refresh button; Git's credential window opens. |
-| "Git does not trust the repository folder" | Normal for shared folders owned by a colleague: press *Trust this folder*. |
+| "Git does not trust the repository folder" | Normal for shared folders owned by a colleague, and for the app's own data folder after it was copied from another computer or restored from a backup: press *Trust this folder*. Nothing is moved or cloned again; your unpublished changes stay where they are. |
+| "This repository has no branch with that name" | The name under *Advanced → Branch* was mistyped (the message lists the branches that exist): correct it, or clear the field to use the repository's own branch. *Create this branch* is only for a second, separate schedule. |
+| "Git did not finish in time and was stopped" | A save, update or sign-in that takes longer than three minutes is stopped so the app never hangs. Nothing is lost: press the button again. |
 | "Some schedule files could not be read" | The file was damaged on this computer: press *Restore the team's version* in the warning bar (unpublished changes on this computer are discarded with it). |
 | "Saved by a newer version" | A teammate uses a newer Team Schedule: install the latest version of the app. |
 | "The team's branch no longer exists on the server" | Someone deleted or renamed the branch. **Save** creates it again from your copy. If the team moved to another branch on purpose, enter the repository address again in *Settings → Repository*: the app then follows the repository's default branch. |
@@ -164,7 +188,7 @@ Node.js 22.12 or newer and Git are required. With Node installed normally, use p
 npm install            # once; if npm skipped Electron's download: node node_modules\electron\install.js
 npm run dev            # run with hot reload
 npm run typecheck
-npm test               # ~3,400 unit, git-integration and store tests (the integration tests need git)
+npm test               # ~3,500 unit, git-integration and store tests (the integration tests need git)
 npm run build          # production build into out\
 npm run test:e2e       # end-to-end tests: Playwright drives the built app (run the build first)
 npm run dist           # build + installer and portable exe into dist\
@@ -185,10 +209,23 @@ Design notes worth knowing before changing things:
   modified files in the working folder (`%APPDATA%\Team Schedule\repos\…`). Publishing is:
   fetch → verify the team's tip is the one the merge was made against → write files → commit
   → push; if the push does not go through, the commit is undone and the work stays unpublished.
+  The commit this computer last agreed on with the team is remembered in
+  `refs/team-schedule/synced`; that is how a branch that was moved back on the server is told
+  apart from a local commit that never went out.
+- **Two queues in `src/main/git/repoService.ts`**: work in the working folder never runs in
+  parallel, and neither do network commands — but a fetch that waits for a silent server
+  does not block writing edits to disk.
+- **File contents are never decoded lossily.** A data file that is not UTF-8 crosses the
+  bridge as its bytes (`RAW_BYTES_PREFIX`), is reported as unreadable, and is written back
+  unchanged.
 - **Selectors must return stable references** (`useApp` is `useSyncExternalStore`): select a
   piece of state as it is and derive from it with `useMemo`.
 - **Right-to-left**: only logical CSS properties (`margin-inline-start`, …); user text keeps
   its own direction with `<bdi>` / `dir="auto"`; times and ranges are always left-to-right.
+  Sentences of the interface keep the interface's direction: every name or value that the
+  translator (`i18n/index.ts`) puts into a sentence is wrapped in Unicode isolates, so a
+  room called "Room A" cannot turn a Hebrew sentence around. Compare such texts in tests
+  with `withoutIsolates()`.
 
 ---
 
@@ -213,4 +250,6 @@ Design notes worth knowing before changing things:
    מיקומים, מורים, כיתות ונושאים (לכל נושא צבע RGB ושם).
 8. **שום עבודה לא הולכת לאיבוד** – השינויים נכתבים למחשב תוך כדי עבודה; שמירה לעולם אינה דורסת
    שינויים של הצוות; וקובץ לו״ז שלא ניתן לקרוא אינו נמחק ואינו נשלח – אפשר לשחזר אותו בלחיצה
-   על ״שחזור הגרסה של הצוות״.
+   על ״שחזור הגרסה של הצוות״. סגירת החלון באמצע כתיבת אירוע שואלת קודם, ו״חזרה״ מחזירה אליו כמו שהיה.
+9. **מקלדת** – אפשר לעבוד בלי עכבר: Tab וחיצים לתנועה, Enter פותח אירוע, Delete מוחק (עם ״ביטול״),
+   Ctrl+S שומר לצוות, PageUp / PageDown מחליפים שבוע, ו-Esc סוגר.

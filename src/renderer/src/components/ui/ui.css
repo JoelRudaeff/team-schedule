@@ -980,6 +980,12 @@
   pointer-events: none;
 }
 
+/* While a dialog is open: the top corner, clear of the dialog's buttons at the bottom. */
+.ui-toasts--over-dialog {
+  inset-block-end: auto;
+  inset-block-start: 16px;
+}
+
 .ui-toast {
   display: flex;
   align-items: flex-start;

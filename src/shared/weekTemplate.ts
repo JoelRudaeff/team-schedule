@@ -61,6 +61,15 @@ export const WEEK_TEMPLATE_EXTENSION = 'week.json';
 
 const TEMPLATE_VERSION = 1;
 
+/**
+ * The longest texts the editor lets a user type. A week file can come from anywhere (another
+ * team, a text editor), so what it brings in is cut to the same lengths on import.
+ */
+export const TEXT_LIMITS = { weekTitle: 120, eventTitle: 200, notes: 2000, entityName: 80 } as const;
+
+/** Times in the app sit on a 15-minute grid; so do the times of everything that is loaded from a week file. */
+const IMPORT_STEP: Minutes = 15;
+
 export interface TemplateRef {
   id: string;
   name: string;
@@ -314,6 +323,22 @@ export function parseWeekTemplate(text: string): WeekTemplate {
 // ───────────────────────────── import and repeat ─────────────────────────────
 
 /**
+ * True for an id from a file that may be kept as the id of a new list entry: letters,
+ * digits, `_` and `-` only, of a sensible length, and not the name of something every
+ * JavaScript object has (`constructor`, `__proto__`, `toString` …).
+ */
+export function isPlainId(id: string): boolean {
+  return /^[A-Za-z0-9_-]{1,64}$/.test(id) && !(id in Object.prototype);
+}
+
+/** The time range moved onto the 15-minute grid: nearest quarter hour, never shorter than one step, inside the day. */
+function onGrid(range: { start: Minutes; end: Minutes }): { start: Minutes; end: Minutes } {
+  const snap = (minutes: Minutes): Minutes => Math.round(minutes / IMPORT_STEP) * IMPORT_STEP;
+  const start = Math.min(snap(range.start), 1440 - IMPORT_STEP);
+  return { start, end: Math.min(1440, Math.max(snap(range.end), start + IMPORT_STEP)) };
+}
+
+/**
  * An id from `newId` that is not in `taken`. A generator that never repeats itself needs at
  * most `taken.size + 1` draws, so running out means it is broken: failing then is better
  * than looping forever, and better than overwriting the event that already has the id.
@@ -368,6 +393,10 @@ export interface ImportWeekResult {
   eventCount: number;
   /** List entries that had to be created because the schedule did not have them. */
   created: { subjects: number; locations: number; teachers: number; classes: number };
+  /** Texts (titles, notes, names) that were longer than the editor allows and were cut. */
+  shortened: number;
+  /** Events whose times were not on the 15-minute grid and were moved to the nearest quarter hour. */
+  snapped: number;
 }
 
 /**
@@ -380,6 +409,10 @@ export interface ImportWeekResult {
  *      when no entry of that kind uses it, else a fresh id) and count it in `created`.
  * An entry created for one event counts as existing for the following ones. A reference
  * that matches nothing and has a blank name cannot become a list entry and is dropped.
+ * What comes in is held to the rules of the editor: texts are cut to TEXT_LIMITS (counted
+ * in `shortened`), times are moved onto the 15-minute grid (counted in `snapped`), and an
+ * id from the file is only kept for a new list entry when it looks like an id (see
+ * isPlainId) — anything else gets a fresh one.
  * Pure: the input dataset is not modified. When nothing changes (no events in `add` mode,
  * no title to apply) the result holds the very same dataset object.
  * Throws DataFormatError('invalid') for a template whose times are not "HH:MM" with
@@ -393,6 +426,14 @@ export function importWeekTemplate(
 ): ImportWeekResult {
   const created: ImportWeekResult['created'] = { subjects: 0, locations: 0, teachers: 0, classes: 0 };
   let next = dataset;
+  let shortened = 0;
+  let snapped = 0;
+  const cut = (text: string, limit: number): string => {
+    if (text.length <= limit) return text;
+    shortened += 1;
+    // Not through the middle of a character that is stored as a pair (emoji).
+    return text.slice(0, limit).replace(/[\uD800-\uDBFF]$/, '');
+  };
 
   const resolve = (kind: EntityKind, ref: TemplateRef | TemplateSubject): string | null => {
     const known = findEntity(next.config, kind, ref.id) ?? findEntityByName(next.config, kind, ref.name);
@@ -401,9 +442,8 @@ export function importWeekTemplate(
     if (ref.name.trim() === '') return null;
     // Step 1 found no entry of this kind with the file's id, so that id is free to keep —
     // unless the file left it empty, which is not an id a list can hold.
-    const id =
-      ref.id !== '' ? ref.id : freshId(newId, new Set(entityList(next.config, kind).map((item) => item.id)));
-    next = addEntity(next, kind, { ...ref, id });
+    const id = isPlainId(ref.id) ? ref.id : freshId(newId, new Set(entityList(next.config, kind).map((item) => item.id)));
+    next = addEntity(next, kind, { ...ref, id, name: cut(ref.name.trim(), TEXT_LIMITS.entityName) });
     created[ENTITY_LIST_KEY[kind]] += 1;
     return id;
   };
@@ -411,25 +451,27 @@ export function importWeekTemplate(
     refs.flatMap((ref) => resolve(kind, ref) ?? []);
 
   const events = template.events.map((item, index): Omit<ScheduleEvent, 'id'> => {
-    const { start, end } = timeRange(item.start, item.end, `events[${index}]`);
+    const exact = timeRange(item.start, item.end, `events[${index}]`);
+    const { start, end } = onGrid(exact);
+    if (start !== exact.start || end !== exact.end) snapped += 1;
     return {
       day: item.day,
       start,
       end,
-      title: item.title,
+      title: cut(item.title.trim(), TEXT_LIMITS.eventTitle),
       subjectId: item.subject ? resolve('subject', item.subject) : null,
       locationId: item.location ? resolve('location', item.location) : null,
       teacherIds: resolveAll('teacher', item.teachers),
       classIds: resolveAll('class', item.classes),
-      notes: item.notes,
+      notes: cut(item.notes.trim(), TEXT_LIMITS.notes),
     };
   });
 
   next = placeEvents(next, options.targetWeek, withFreshIds(events, next, options.targetWeek, newId), options.mode);
   if (options.applyTitle && template.title.trim() !== '') {
-    next = setWeekTitle(next, options.targetWeek, template.title);
+    next = setWeekTitle(next, options.targetWeek, cut(template.title.trim(), TEXT_LIMITS.weekTitle));
   }
-  return { dataset: next, eventCount: events.length, created };
+  return { dataset: next, eventCount: events.length, created, shortened, snapped };
 }
 
 export interface CopyWeekOptions {

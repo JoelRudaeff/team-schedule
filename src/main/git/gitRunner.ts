@@ -37,7 +37,7 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { stat } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { delimiter, isAbsolute, join } from 'node:path';
 import type { GitInfo, SyncError, SyncErrorCode } from '@shared/api';
 import { maskRepoUrl } from '@shared/repoUrl';
 
@@ -69,6 +69,7 @@ export class GitError extends Error {
   readonly detail: string;
   readonly exitCode: number | null;
   readonly trustPath?: string;
+  readonly branches?: string[];
 
   constructor(error: SyncError, exitCode: number | null) {
     super(error.message);
@@ -77,10 +78,11 @@ export class GitError extends Error {
     this.detail = error.detail;
     this.exitCode = exitCode;
     this.trustPath = error.trustPath;
+    this.branches = error.branches;
   }
 
   toSyncError(): SyncError {
-    return { code: this.code, message: this.message, detail: this.detail, trustPath: this.trustPath };
+    return { code: this.code, message: this.message, detail: this.detail, trustPath: this.trustPath, branches: this.branches };
   }
 }
 
@@ -92,7 +94,7 @@ export interface GitRunner {
 // ───────────────────────────── child processes ─────────────────────────────
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-/** `git --version` and `where.exe` answer at once; anything slower is not a usable git. */
+/** `git --version` answers at once; anything slower is not a usable git. */
 const DETECT_TIMEOUT_MS = 10_000;
 /** How long a killed process tree gets to release its output pipes before the call gives up on them. */
 const KILL_GRACE_MS = 5_000;
@@ -262,21 +264,33 @@ async function gitVersionOf(path: string): Promise<string | null> {
   return match === null ? null : match[1].trim();
 }
 
-/** Every `git` on PATH, best match first. */
+async function isFile(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Every `git` in the folders of PATH, in PATH order.
+ *
+ * The folders are walked here instead of asking `where.exe`, because that tool looks into
+ * the CURRENT folder first — and the app must never run, let alone adopt for all its work,
+ * a git.exe that merely lies in the folder it was started from (Downloads, some project).
+ * For the same reason PATH entries that are not full paths are skipped: an empty entry or
+ * "." means "the current folder".
+ */
 async function gitOnPath(): Promise<string[]> {
-  const windows = process.platform === 'win32';
-  const outcome = await execute({
-    file: windows ? systemTool('where.exe') : 'which',
-    args: windows ? ['git'] : ['-a', 'git'],
-    env: process.env,
-    timeoutMs: DETECT_TIMEOUT_MS,
-  });
-  if (outcome.exitCode !== 0) return [];
-  return outcome.stdout
-    .toString('utf8')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => isAbsolute(line));
+  const name = process.platform === 'win32' ? 'git.exe' : 'git';
+  const found: string[] = [];
+  for (const entry of (process.env.PATH ?? '').split(delimiter)) {
+    const folder = entry.trim().replace(/^"(.*)"$/, '$1');
+    if (folder === '' || !isAbsolute(folder)) continue;
+    const candidate = join(folder, name);
+    if (await isFile(candidate)) found.push(candidate);
+  }
+  return found;
 }
 
 function usualInstallPaths(): string[] {
@@ -302,7 +316,8 @@ async function* gitCandidates(customPath: string | null): AsyncGenerator<string>
 }
 
 /**
- * Finds git: `customPath` when given and valid, else `git` on PATH (via `where.exe git`),
+ * Finds git: `customPath` when given and valid, else `git` in the folders of PATH (never in
+ * the current folder),
  * else the usual install folders (%ProgramFiles%\Git\cmd\git.exe,
  * %ProgramFiles(x86)%\Git\cmd\git.exe, %LocalAppData%\Programs\Git\cmd\git.exe).
  * A candidate is valid when `<path> --version` prints "git version X"; the version is the
@@ -429,6 +444,7 @@ const SUMMARIES: Record<Exclude<SyncErrorCode, 'unknown'>, string> = {
   auth: 'Sign-in is needed, or access to the repository was refused',
   'not-found': 'The repository was not found',
   'dubious-ownership': 'git does not trust the folder because another user owns it',
+  'branch-missing': 'The repository has no branch with that name',
   timeout: 'git did not finish in time and was stopped',
 };
 

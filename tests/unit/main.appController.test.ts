@@ -70,6 +70,7 @@ function fakeService(rig: Rig, dir: string, url: string, branch: string): RepoHa
     dir,
     url,
     branch,
+    idle: async () => undefined,
     setIdentity: async (name, email) => note(`setIdentity ${name} <${email}>`),
     hasSchedule: async () => rig.git.hasSchedule,
     fetch: async (interactive) => {

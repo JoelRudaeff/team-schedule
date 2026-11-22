@@ -7,7 +7,7 @@ import { prefillFromFilters } from '../../lib/commitText';
 import { formatWeekRange } from '../../lib/format';
 import { actions, getState, useApp } from '../../store';
 import { LanguageSwitch } from '../common/LanguageSwitch';
-import { Badge, Button, DateInput, Icon, IconButton, MenuButton, MultiSelect, NumberInput, Popover, type MenuItem } from '../ui';
+import { Badge, Button, DateInput, Icon, IconButton, MenuButton, MultiSelect, NumberInput, Popover, textDirection, type MenuItem } from '../ui';
 import { SyncStatusBar } from './SyncStatusBar';
 import './toolbar.css';
 
@@ -56,7 +56,10 @@ function GoTo(): ReactNode {
   const weekStart = useApp((s) => s.weekStart);
   const course = useApp((s) => s.working.config.course);
   const [value, setValue] = useState<number | null>(null);
-  const [failed, setFailed] = useState<number | null>(null);
+  /** What is in the box, usable or not. */
+  const [entry, setEntry] = useState('');
+  /** The entry that led nowhere, as it was typed. */
+  const [failed, setFailed] = useState<string | null>(null);
   const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
   const max = maxWeekNumber(course, weekStart);
@@ -66,15 +69,19 @@ function GoTo(): ReactNode {
   useEffect(() => {
     setFailed(null);
     setValue(null);
+    setEntry('');
   }, [weekStart]);
 
   const go = (): void => {
-    if (value === null) return;
-    if (actions.goToWeekNumber(value)) {
+    const typed = entry.trim();
+    if (typed === '') return;
+    // Anything that is not the number of a week gets the same answer: 0, -3, 1.5 or 99.
+    if (value !== null && actions.goToWeekNumber(value)) {
       setFailed(null);
       setValue(null);
+      setEntry('');
     } else {
-      setFailed(value);
+      setFailed(typed);
     }
   };
 
@@ -88,13 +95,15 @@ function GoTo(): ReactNode {
   return (
     <div className="tb-goto" title={t('toolbar.weekNumberHint')}>
       <NumberInput
+        // A fresh box for every week: nothing typed for another week stays behind.
+        key={weekStart}
         id="tb-week-number"
         value={value}
-        onChange={(next) => {
-          setValue(next);
+        onChange={setValue}
+        onTextChange={(text) => {
+          setEntry(text);
           setFailed(null);
         }}
-        min={1}
         placeholder={t('toolbar.weekNumber')}
         invalid={failed !== null}
         ariaLabel={t('toolbar.weekNumberHint')}
@@ -145,7 +154,7 @@ function WeekTitle(): ReactNode {
   return (
     <input
       className="tb-week__title"
-      dir="auto"
+      dir={textDirection(draft)}
       value={draft}
       placeholder={t('toolbar.weekTitlePlaceholder')}
       aria-label={t('toolbar.weekTitleLabel')}
@@ -259,7 +268,9 @@ function MainMenu(): ReactNode {
         id: 'save-week',
         label: t('toolbar.saveWeekFile'),
         icon: 'download',
-        onSelect: () => void actions.exportWeekFile(weekStart, { filteredOnly: hasActiveFilters(getState().filters) }),
+        // Always the whole week, whatever filter is on: a week file is loaded again "for repeating",
+        // and half a week would later look like lost lessons.
+        onSelect: () => void actions.exportWeekFile(weekStart, { filteredOnly: false }),
       },
       { id: 'load-week', label: t('toolbar.loadWeekFile'), icon: 'upload', onSelect: () => void actions.pickWeekFile() },
       { id: 'repeat-week', label: t('toolbar.repeatWeek'), icon: 'repeat', onSelect: () => actions.openDialog({ type: 'repeat-week' }) },

@@ -15,11 +15,26 @@ import { BusyOverlay, Button, Callout, ConfirmDialog, DetailsBox, ErrorDialog, S
 import { translatorFor } from './i18n';
 import { useT } from './i18n/useT';
 import { actions, getState, useApp } from './store';
+import type { DialogState } from './store/types';
 
-/** Renders the one open modal dialog. */
+/**
+ * Renders the one open modal dialog. The question "close the window?" is laid over the
+ * dialog that was open when the window was closed: that one stays mounted underneath, so
+ * what was typed into it is still there when the answer is "stay".
+ */
 function DialogHost(): ReactNode {
   const dialog = useApp((s) => s.dialog);
   if (!dialog) return null;
+  if (dialog.type !== 'close-guard') return renderDialog(dialog);
+  return (
+    <>
+      {dialog.covered ? renderDialog(dialog.covered) : null}
+      <CloseGuardDialog dialog={dialog} />
+    </>
+  );
+}
+
+function renderDialog(dialog: Exclude<DialogState, { type: 'close-guard' }> | DialogState): ReactNode {
   switch (dialog.type) {
     case 'event':
       // The key makes sure a different event never re-uses the previous form state.
@@ -39,7 +54,7 @@ function DialogHost(): ReactNode {
     case 'repeat-week':
       return <RepeatWeekDialog />;
     case 'close-guard':
-      return <CloseGuardDialog />;
+      return <CloseGuardDialog dialog={dialog} />;
     case 'confirm':
       return <ConfirmDialog dialog={dialog} />;
     case 'error':

@@ -109,6 +109,11 @@
   scrollbar-gutter: stable;
 }
 
+/* Takes the focus only as a fallback (after the last event was deleted): no ring around the whole week. */
+.wg-scroll:focus {
+  outline: none;
+}
+
 .wg-body {
   position: relative;
   min-height: 100%;

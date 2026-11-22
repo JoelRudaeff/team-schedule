@@ -14,7 +14,8 @@
   overflow: auto;
 }
 
-.st-nav__group {
+.st-nav__group,
+.st-nav .ui-tabs__group {
   padding: 8px 12px 4px;
   color: var(--text-3);
   font-size: var(--fs-xs);

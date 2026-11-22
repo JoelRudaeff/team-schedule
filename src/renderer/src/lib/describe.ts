@@ -2,7 +2,7 @@
 import { addDays, isValidIsoDate, minutesToHHMM } from '@shared/dates';
 import type { DiffItem, ItemRef, ItemValue } from '@shared/merge';
 import type { IsoDate, NamedItem, ScheduleConfig, ScheduleEvent } from '@shared/types';
-import type { MessageKey, Translator } from '../i18n';
+import { isolate, ltr, type MessageKey, type Translator } from '../i18n';
 import { dayName, formatDate, formatDayMonth, formatTimeRange, formatWeekRange } from './format';
 import { entityName, eventHeadline } from './lookup';
 
@@ -91,7 +91,9 @@ export function eventLine(event: ScheduleEvent, weekStart: IsoDate | undefined, 
   const day = dayName(event.day, tr.lang, 'short');
   const date = weekStart ? ` ${formatDayMonth(addDays(weekStart, event.day), tr.lang)}` : '';
   const location = entityName(config, 'location', event.locationId);
-  return `${day}${date} · ${formatTimeRange(event.start, event.end)}${location ? ` · ${location}` : ''}`;
+  // The hours read left to right as in the grid, and a room's name keeps its own direction:
+  // neither may re-order the line they stand in.
+  return `${day}${date} · ${ltr(formatTimeRange(event.start, event.end))}${location ? ` · ${isolate(location)}` : ''}`;
 }
 
 export interface ItemText {
@@ -128,7 +130,10 @@ export function describeDiff(item: DiffItem, config: ScheduleConfig, tr: Transla
   const scalar = item.kind === 'course' || item.kind === 'timeGrid' || item.kind === 'weekTitle';
   if (scalar) {
     const now = describeItem(item, item.after, config, tr);
-    return { title: now.title, detail: `${scalarText(item, item.before, tr)} → ${scalarText(item, item.after, tr)}` };
+    // "old → new" in reading direction: in Hebrew the old value stands on the right, so the
+    // arrow has to point left. Each value is isolated, or a Latin name would turn the line around.
+    const arrow = tr.dir === 'rtl' ? '←' : '→';
+    return { title: now.title, detail: `${isolate(scalarText(item, item.before, tr))} ${arrow} ${isolate(scalarText(item, item.after, tr))}` };
   }
   const shown = describeItem(item, item.after ?? item.before, config, tr);
   if (item.change !== 'modified') return shown;

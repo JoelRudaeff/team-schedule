@@ -239,46 +239,42 @@ describe('formatRelative', () => {
   const DAY = 24 * HOUR;
   const ago = (ms: number, lang: Lang): string => formatRelative(NOW - ms, lang, NOW);
   const ahead = (ms: number, lang: Lang): string => formatRelative(NOW + ms, lang, NOW);
-  const rtf = (lang: Lang): Intl.RelativeTimeFormat => new Intl.RelativeTimeFormat(localeOf(lang), { numeric: 'auto' });
 
-  it('seconds: "now"', () => {
-    expect(ago(0, 'en')).toBe('now');
-    expect(ago(10 * SEC, 'en')).toBe('now');
-    expect(ago(44 * SEC, 'en')).toBe('now');
-    expect(ahead(30 * SEC, 'en')).toBe('now');
+  it('seconds: "just now"', () => {
+    expect(ago(0, 'en')).toBe('just now');
+    expect(ago(10 * SEC, 'en')).toBe('just now');
+    expect(ago(44 * SEC, 'en')).toBe('just now');
     expect(ago(10 * SEC, 'he')).toBe('עכשיו');
-    expect(ahead(30 * SEC, 'he')).toBe('עכשיו');
   });
 
   it('minutes', () => {
     expect(ago(45 * SEC, 'en')).toBe('1 minute ago');
     expect(ago(MIN, 'en')).toBe('1 minute ago');
+    expect(ago(2 * MIN, 'en')).toBe('2 minutes ago');
     expect(ago(3 * MIN, 'en')).toBe('3 minutes ago');
     expect(ago(3 * MIN + 20 * SEC, 'en')).toBe('3 minutes ago');
     expect(ago(30 * MIN, 'en')).toBe('30 minutes ago');
-    expect(ahead(3 * MIN, 'en')).toBe('in 3 minutes');
+    expect(ago(MIN, 'he')).toBe('לפני דקה');
+    expect(ago(2 * MIN, 'he')).toBe('לפני שתי דקות');
     expect(ago(3 * MIN, 'he')).toBe('לפני 3 דקות');
-    expect(ago(3 * MIN, 'he')).toBe(rtf('he').format(-3, 'minute'));
-    expect(ahead(3 * MIN, 'he')).toBe(rtf('he').format(3, 'minute'));
   });
 
   it('hours', () => {
     expect(ago(HOUR, 'en')).toBe('1 hour ago');
     expect(ago(2 * HOUR, 'en')).toBe('2 hours ago');
     expect(ago(5 * HOUR + 20 * MIN, 'en')).toBe('5 hours ago');
-    expect(ahead(2 * HOUR, 'en')).toBe('in 2 hours');
-    expect(ago(5 * HOUR, 'he')).toBe(rtf('he').format(-5, 'hour'));
-    expect(ago(5 * HOUR, 'he')).toContain('שעות');
+    expect(ago(HOUR, 'he')).toBe('לפני שעה');
+    expect(ago(2 * HOUR, 'he')).toBe('לפני שעתיים');
+    expect(ago(5 * HOUR, 'he')).toBe('לפני 5 שעות');
   });
 
   it('days', () => {
     expect(ago(DAY, 'en')).toBe('yesterday');
-    expect(ahead(DAY, 'en')).toBe('tomorrow');
+    expect(ago(2 * DAY, 'en')).toBe('2 days ago');
     expect(ago(5 * DAY, 'en')).toBe('5 days ago');
     expect(ago(29 * DAY, 'en')).toBe('29 days ago');
-    expect(ahead(5 * DAY, 'en')).toBe('in 5 days');
     expect(ago(DAY, 'he')).toBe('אתמול');
-    expect(ahead(DAY, 'he')).toBe('מחר');
+    expect(ago(2 * DAY, 'he')).toBe('שלשום');
     expect(ago(5 * DAY, 'he')).toBe('לפני 5 ימים');
   });
 
@@ -286,46 +282,46 @@ describe('formatRelative', () => {
     expect(ago(30 * DAY, 'en')).toBe('last month');
     expect(ago(60 * DAY, 'en')).toBe('2 months ago');
     expect(ago(200 * DAY, 'en')).toBe('7 months ago');
-    expect(ahead(90 * DAY, 'en')).toBe('in 3 months');
-    expect(ago(30 * DAY, 'he')).toBe(rtf('he').format(-1, 'month'));
-    expect(ago(150 * DAY, 'he')).toBe(rtf('he').format(-5, 'month'));
-    expect(ago(150 * DAY, 'he')).toContain('חודשים');
+    expect(ago(30 * DAY, 'he')).toBe('לפני חודש');
+    expect(ago(60 * DAY, 'he')).toBe('לפני חודשיים');
+    expect(ago(150 * DAY, 'he')).toBe('לפני 5 חודשים');
   });
 
   it('years', () => {
     expect(ago(365 * DAY, 'en')).toBe('last year');
+    expect(ago(2 * 365 * DAY, 'en')).toBe('2 years ago');
     expect(ago(3 * 365 * DAY, 'en')).toBe('3 years ago');
-    expect(ahead(2 * 365 * DAY, 'en')).toBe('in 2 years');
-    expect(ago(365 * DAY, 'he')).toBe(rtf('he').format(-1, 'year'));
+    expect(ago(365 * DAY, 'he')).toBe('לפני שנה');
+    expect(ago(2 * 365 * DAY, 'he')).toBe('לפני שנתיים');
     expect(ago(3 * 365 * DAY, 'he')).toBe('לפני 3 שנים');
   });
 
+  it('Hebrew never carries the number again in brackets ("לפני שעה (1)", as the system words it)', () => {
+    for (const ms of [MIN, 2 * MIN, HOUR, 2 * HOUR, DAY, 2 * DAY, 30 * DAY, 60 * DAY, 365 * DAY, 2 * 365 * DAY]) {
+      expect(ago(ms, 'he')).not.toMatch(/[()]/);
+      expect(ago(ms, 'he')).not.toMatch(/[A-Za-z{}]/);
+    }
+  });
+
+  it('an instant that lies ahead (a teammate\'s clock runs fast) reads "just now", never "in 3 minutes"', () => {
+    for (const ms of [30 * SEC, 3 * MIN, 2 * HOUR, 5 * DAY, 400 * DAY]) {
+      expect(ahead(ms, 'en')).toBe('just now');
+      expect(ahead(ms, 'he')).toBe('עכשיו');
+    }
+  });
+
   it('uses the current time when no "now" is given', () => {
-    expect(formatRelative(Date.now(), 'en')).toBe('now');
+    expect(formatRelative(Date.now(), 'en')).toBe('just now');
     expect(formatRelative(Date.now() - 5 * MIN, 'en')).toBe('5 minutes ago');
     expect(formatRelative(Date.now(), 'he')).toBe('עכשיו');
   });
 
   it('never shows a count that belongs to the next larger unit ("60 minutes", "24 hours")', () => {
     for (const lang of ['en', 'he'] as const) {
-      const texts = [
-        ago(59 * MIN + 40 * SEC, lang),
-        ago(23 * HOUR + 40 * MIN, lang),
-        ahead(59 * MIN + 40 * SEC, lang),
-        ahead(23 * HOUR + 40 * MIN, lang),
-      ];
-      expect(texts[0]).not.toContain('60');
-      expect(texts[1]).not.toContain('24');
-      expect(texts[2]).not.toContain('60');
-      expect(texts[3]).not.toContain('24');
+      expect(ago(59 * MIN + 40 * SEC, lang)).not.toContain('60');
+      expect(ago(23 * HOUR + 40 * MIN, lang)).not.toContain('24');
     }
-  });
-
-  it('is symmetric: the past never reads as the future', () => {
-    for (const ms of [50 * SEC, 5 * MIN, 5 * HOUR, 5 * DAY, 90 * DAY, 800 * DAY]) {
-      expect(ago(ms, 'en')).toMatch(/ago$/);
-      expect(ahead(ms, 'en')).toMatch(/^in /);
-      expect(ago(ms, 'he')).not.toBe(ahead(ms, 'he'));
-    }
+    expect(ago(59 * MIN + 40 * SEC, 'en')).toBe('1 hour ago');
+    expect(ago(23 * HOUR + 40 * MIN, 'en')).toBe('yesterday');
   });
 });

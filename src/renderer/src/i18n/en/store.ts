@@ -27,6 +27,7 @@ export const store = {
   errAuth: 'Sign-in is needed, or you do not have access to the team repository.',
   errNotFound: 'The team repository was not found. Check its address in Settings.',
   errDubious: 'Git does not trust the repository folder because another Windows user owns it.',
+  errBranchMissing: 'This repository has no branch with that name.',
   errTimeout: 'The team repository did not answer in time.',
   errGitMissing: 'Git was not found on this computer.',
   errInvalidUrl: 'The repository address is not valid.',
@@ -64,6 +65,10 @@ export const store = {
     'The team\'s branch no longer exists on the server, so there is nothing to update. Saving will create it again from your copy.',
   noteRestored: '{kind} "{name}" was kept because an event still uses it.',
   noteTimeGrid: 'The day\'s hours were taken from the team\'s version.',
+  noteCourseDates:
+    'Your course dates and the team\'s did not fit together (the course would end before it starts). The team\'s dates were kept.',
+  noteMerged: '{kind} "{name}" was added twice, by you and by a teammate. Your events now use the team\'s entry.',
+  mergeOutdated: 'The schedule changed after this overview was drawn, so it was built again. Please decide once more.',
 
   // publish
   nothingToPublish: 'There is nothing to save: no unpublished changes.',
@@ -74,6 +79,9 @@ export const store = {
 
   // kept aside
   asideApplied: 'Your version is back in the schedule (not published yet).',
+  asideCannotApply:
+    'This version no longer fits the schedule (its hours or dates would contradict the current ones), so it stays in the list.',
+  asideRefsDropped: 'Something this version used (a teacher, class, location or subject) no longer exists and was left out.',
 
   // first schedule
   scheduleCreated: 'The schedule was created and shared with the team.',
@@ -88,13 +96,18 @@ export const store = {
   exportIcsDone_other: '{count} events exported.',
   actionOpen: 'Open',
   exportWeekTitle: 'Save week to file',
-  exportWeekDone: 'The week was saved to a file.',
+  exportWeekDone_one: 'The whole week was saved to a file ({count} event).',
+  exportWeekDone_other: 'The whole week was saved to a file ({count} events).',
   importWeekTitle: 'Load week from file',
   importInvalid: 'This is not a valid week file.',
   importNewer: 'This week file was saved by a newer version of Team Schedule.',
   importDone_one: '{count} event loaded into the week.',
   importDone_other: '{count} events loaded into the week.',
   importCreated: 'New list entries were added: {list}.',
+  importSnapped_one: '{count} event had a time off the quarter-hour grid and was moved to the nearest quarter hour.',
+  importSnapped_other: '{count} events had times off the quarter-hour grid and were moved to the nearest quarter hour.',
+  importShortened_one: '{count} text was longer than the schedule allows and was cut.',
+  importShortened_other: '{count} texts were longer than the schedule allows and were cut.',
   fileFilterWeek: 'Week file',
   fileFilterIcs: 'Calendar file',
   icsTeachers: 'Teachers',

@@ -264,7 +264,10 @@ export interface TextInputProps extends Omit<InputHTMLAttributes<HTMLInputElemen
   value: string;
   onChange: (value: string) => void;
   invalid?: boolean;
-  /** Force a direction (URLs, e-mail, paths → 'ltr'). Default 'auto'. */
+  /**
+   * Force a direction (URLs, e-mail, paths → 'ltr'). Default: the direction of the typed
+   * text, and the interface's while the box is empty.
+   */
   dir?: 'auto' | 'ltr' | 'rtl';
   /** Called when Enter is pressed. */
   onEnter?: () => void;
@@ -279,9 +282,16 @@ export interface TextAreaProps extends Omit<TextareaHTMLAttributes<HTMLTextAreaE
 }
 
 /** Whole-number input; emits null while the box is empty or not a number. */
+/**
+ * A box for a whole number. `onChange` gets the number, or null while the box is empty or
+ * holds something unusable (not a whole number, outside min…max). What was typed always
+ * stays in the box — an unusable entry is marked, never erased; `onTextChange` reports it.
+ */
 export interface NumberInputProps {
   value: number | null;
   onChange: (value: number | null) => void;
+  /** The text in the box after every key stroke, usable or not. */
+  onTextChange?: (text: string) => void;
   min?: number;
   max?: number;
   step?: number;
@@ -382,6 +392,11 @@ export interface TabItem<T extends string> {
   icon?: IconName;
   /** Small marker after the label (e.g. a count). */
   badge?: ReactNode;
+  /**
+   * A caption shown above this tab: it starts a group. The groups are ONE list for the
+   * keyboard: one tab stop, and the arrow keys run through all tabs across the captions.
+   */
+  group?: string;
 }
 
 export interface TabsProps<T extends string> {

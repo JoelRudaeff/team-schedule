@@ -54,7 +54,7 @@ export const settings: SettingsMessages = {
   courseEnd: 'סיום הקורס',
   courseWeeks_one: 'אורך הקורס: שבוע אחד.',
   courseWeeks_other: 'אורך הקורס: {count} שבועות.',
-  courseDatesInvalid: 'תאריך הסיום מוקדם מתאריך ההתחלה.',
+  courseDatesInvalid: 'תאריך הסיום מוקדם מתאריך ההתחלה. התאריכים יישמרו רק כשיתאימו זה לזה.',
   courseDatesHint: 'עם תאריך התחלה, השבועות ממוספרים מהשבוע הראשון של הקורס.',
   hoursTitle: 'השעות המוצגות בשבוע',
   dayStart: 'תחילת היום',

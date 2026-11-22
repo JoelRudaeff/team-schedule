@@ -1,0 +1,337 @@
+/**
+ * What must hold after a merge and after "use my version", whatever the two sides did to a
+ * teacher, room, class or subject: no event is left pointing at nothing, nobody loses
+ * assignments through the back door, the lists do not end up with the same name twice, and
+ * the course never ends before it starts.
+ *
+ * Every case here was found broken by an independent review of version 1.0.0.
+ */
+import { describe, expect, it } from 'vitest';
+import { applyAsideItem, applyMerge, mergeDatasets, type AsideItem, type Resolution } from '@shared/merge';
+import {
+  addEntity,
+  countEntityUsage,
+  entityList,
+  findEntity,
+  findEvent,
+  referencedIds,
+  removeEntity,
+  updateCourse,
+  updateEntity,
+  upsertEvent,
+} from '@shared/model';
+import { datasetToFiles, emptyDataset, filesToDataset } from '@shared/serialize';
+import type { Dataset, EntityKind, ScheduleEvent } from '@shared/types';
+
+const WEEK = '2026-11-22';
+const NOW = '2026-11-22T00:00:00.000Z';
+const KINDS: EntityKind[] = ['subject', 'location', 'teacher', 'class'];
+
+function ev(id: string, day: number, extra: Partial<ScheduleEvent> = {}): ScheduleEvent {
+  return {
+    id,
+    day: day as ScheduleEvent['day'],
+    start: 540,
+    end: 600,
+    title: id,
+    subjectId: null,
+    locationId: null,
+    teacherIds: [],
+    classIds: [],
+    notes: '',
+    ...extra,
+  };
+}
+
+/** Teachers Dana (T) and Uri (U); Dana teaches five lessons. */
+function baseWithTeacher(): Dataset {
+  let dataset = emptyDataset();
+  dataset = addEntity(dataset, 'teacher', { id: 'T', name: 'Dana' });
+  dataset = addEntity(dataset, 'teacher', { id: 'U', name: 'Uri' });
+  for (let i = 0; i < 5; i++) dataset = upsertEvent(dataset, WEEK, ev(`e${i}`, i, { teacherIds: ['T'] }));
+  return dataset;
+}
+
+function merge(base: Dataset, mine: Dataset, theirs: Dataset, defaultResolution: Resolution) {
+  const result = mergeDatasets(base, mine, theirs);
+  return { result, applied: applyMerge({ mine, theirs, result, resolutions: {}, defaultResolution, now: NOW }) };
+}
+
+/** Every reference of every event that points at an entry the lists do not have. */
+function dangling(dataset: Dataset): string[] {
+  const found: string[] = [];
+  for (const [weekStart, week] of Object.entries(dataset.weeks)) {
+    for (const event of week.events) {
+      for (const kind of KINDS) {
+        for (const id of referencedIds(event, kind)) {
+          if (!findEntity(dataset.config, kind, id)) found.push(`${weekStart}/${event.id} -> ${kind} ${id}`);
+        }
+      }
+    }
+  }
+  return found;
+}
+
+describe('one side deletes a list entry, the other side changes it', () => {
+  it('the team deletes a teacher, I rename her and my version wins: she keeps her five lessons', () => {
+    const base = baseWithTeacher();
+    const mine = updateEntity(base, 'teacher', 'T', { name: 'Dana Levi' });
+    const theirs = removeEntity(base, 'teacher', 'T');
+    const { result, applied } = merge(base, mine, theirs, 'mine');
+
+    expect(result.items.filter((item) => item.status === 'conflict').map((item) => item.key)).toEqual(['teacher:T']);
+    expect(findEntity(applied.dataset.config, 'teacher', 'T')).toEqual({ id: 'T', name: 'Dana Levi' });
+    // Deleting her had taken her out of every event on the team's side. She stays, so do her lessons.
+    expect(countEntityUsage(applied.dataset, 'teacher', 'T')).toBe(5);
+    expect(dangling(applied.dataset)).toEqual([]);
+  });
+
+  it.each(['theirs', 'aside'] as const)('I delete a teacher, the team renames her, resolved as "%s": she keeps her five lessons', (resolution) => {
+    const base = baseWithTeacher();
+    const mine = removeEntity(base, 'teacher', 'T');
+    const theirs = updateEntity(base, 'teacher', 'T', { name: 'Dana Levi' });
+    const { applied } = merge(base, mine, theirs, resolution);
+
+    expect(findEntity(applied.dataset.config, 'teacher', 'T')).toEqual({ id: 'T', name: 'Dana Levi' });
+    // My deletion did not happen, so neither does its side effect on the team's events.
+    expect(countEntityUsage(applied.dataset, 'teacher', 'T')).toBe(5);
+    expect(applied.aside.map((item) => item.key)).toEqual(resolution === 'aside' ? ['teacher:T'] : []);
+    // Nothing of this is left for me to publish.
+    expect(applied.dataset).toEqual(theirs);
+  });
+
+  it('the deletion wins: the entry is gone and nothing points at it', () => {
+    const base = baseWithTeacher();
+    const mine = removeEntity(base, 'teacher', 'T');
+    const theirs = updateEntity(base, 'teacher', 'T', { name: 'Dana Levi' });
+    const { applied } = merge(base, mine, theirs, 'mine');
+
+    expect(findEntity(applied.dataset.config, 'teacher', 'T')).toBeUndefined();
+    expect(countEntityUsage(applied.dataset, 'teacher', 'T')).toBe(0);
+    expect(dangling(applied.dataset)).toEqual([]);
+  });
+
+  it('a lesson that the keeping side had given to somebody else is not handed back', () => {
+    const base = baseWithTeacher();
+    // I rename Dana and move e0 from her to Uri; the team deletes her.
+    let mine = updateEntity(base, 'teacher', 'T', { name: 'Dana Levi' });
+    mine = upsertEvent(mine, WEEK, ev('e0', 0, { teacherIds: ['U'] }));
+    const theirs = removeEntity(base, 'teacher', 'T');
+    const { applied } = merge(base, mine, theirs, 'mine');
+
+    expect(findEvent(applied.dataset, WEEK, 'e0')?.teacherIds).toEqual(['U']);
+    expect(countEntityUsage(applied.dataset, 'teacher', 'T')).toBe(4);
+  });
+
+  it('works the same for the single-valued references (location, subject)', () => {
+    let base = emptyDataset();
+    base = addEntity(base, 'location', { id: 'L', name: 'Room 1' });
+    base = addEntity(base, 'subject', { id: 'S', name: 'Lab', color: '#16A34A' });
+    base = upsertEvent(base, WEEK, ev('a', 0, { locationId: 'L', subjectId: 'S' }));
+    const mine = updateEntity(updateEntity(base, 'location', 'L', { name: 'Room 1 (lab)' }), 'subject', 'S', { name: 'Laboratory' });
+    const theirs = removeEntity(removeEntity(base, 'location', 'L'), 'subject', 'S');
+    const { applied } = merge(base, mine, theirs, 'mine');
+
+    expect(findEvent(applied.dataset, WEEK, 'a')).toMatchObject({ locationId: 'L', subjectId: 'S' });
+    expect(dangling(applied.dataset)).toEqual([]);
+  });
+});
+
+describe('"use my version" of something that was kept aside', () => {
+  /** The team deleted Dana; I had put Dana and Uri on e0. My e0 was kept aside. */
+  function asideEvent(): { dataset: Dataset; item: AsideItem } {
+    const base = baseWithTeacher();
+    const theirs = removeEntity(base, 'teacher', 'T');
+    const mine = upsertEvent(base, WEEK, ev('e0', 0, { teacherIds: ['T', 'U'], title: 'Mine' }));
+    const { applied } = merge(base, mine, theirs, 'aside');
+    expect(applied.aside.map((item) => item.key)).toEqual([`event:${WEEK}:e0`]);
+    expect(findEntity(applied.dataset.config, 'teacher', 'T')).toBeUndefined();
+    return { dataset: applied.dataset, item: applied.aside[0] };
+  }
+
+  it('an event kept aside remembers the list entries it uses', () => {
+    const { item } = asideEvent();
+    expect(item.entities).toEqual([
+      { kind: 'teacher', value: { id: 'T', name: 'Dana' } },
+      { kind: 'teacher', value: { id: 'U', name: 'Uri' } },
+    ]);
+  });
+
+  it('my event comes back whole: a teacher who was deleted meanwhile is restored with it', () => {
+    const { dataset, item } = asideEvent();
+    const after = applyAsideItem(dataset, item);
+
+    expect(findEvent(after, WEEK, 'e0')).toMatchObject({ title: 'Mine', teacherIds: ['T', 'U'] });
+    expect(findEntity(after.config, 'teacher', 'T')).toEqual({ id: 'T', name: 'Dana' });
+    expect(dangling(after)).toEqual([]);
+  });
+
+  it('when the list meanwhile has an entry of that name again, my event points to that one', () => {
+    const { dataset, item } = asideEvent();
+    const readded = addEntity(dataset, 'teacher', { id: 'T2', name: ' dana ' });
+    const after = applyAsideItem(readded, item);
+
+    expect(findEvent(after, WEEK, 'e0')?.teacherIds).toEqual(['T2', 'U']);
+    expect(entityList(after.config, 'teacher').map((teacher) => teacher.id)).toEqual(['U', 'T2']);
+    expect(dangling(after)).toEqual([]);
+  });
+
+  it('an entry nothing is known about (kept aside by an older version of the app) is left out, not left dangling', () => {
+    const { dataset, item } = asideEvent();
+    const old: AsideItem = { ...item };
+    delete old.entities;
+    const after = applyAsideItem(dataset, old);
+
+    expect(findEvent(after, WEEK, 'e0')).toMatchObject({ title: 'Mine', teacherIds: ['U'] });
+    expect(dangling(after)).toEqual([]);
+  });
+
+  it('my deletion of a list entry takes it out of every event, exactly like removing it in Settings', () => {
+    const base = baseWithTeacher();
+    const mine = removeEntity(base, 'teacher', 'T');
+    // The team renames her and gives her one more lesson.
+    const theirs = upsertEvent(updateEntity(base, 'teacher', 'T', { name: 'Dana Levi' }), WEEK, ev('new', 6, { teacherIds: ['T'] }));
+    const { applied } = merge(base, mine, theirs, 'aside');
+    expect(countEntityUsage(applied.dataset, 'teacher', 'T')).toBe(6);
+
+    const after = applyAsideItem(applied.dataset, applied.aside[0]);
+    expect(findEntity(after.config, 'teacher', 'T')).toBeUndefined();
+    expect(countEntityUsage(after, 'teacher', 'T')).toBe(0);
+    expect(dangling(after)).toEqual([]);
+    expect(after).toEqual(removeEntity(applied.dataset, 'teacher', 'T'));
+  });
+
+  it('a course date that would make the course end before it starts is refused (the same dataset comes back)', () => {
+    const dataset = updateCourse(emptyDataset(), { startDate: '2026-09-06', endDate: '2026-12-31' });
+    const item: AsideItem = { key: 'course.startDate', kind: 'course', field: 'startDate', mine: '2027-01-10', theirs: '2026-09-06', createdAt: NOW };
+    expect(applyAsideItem(dataset, item)).toBe(dataset);
+    // A date that fits is taken.
+    const fits: AsideItem = { ...item, mine: '2026-10-04' };
+    expect(applyAsideItem(dataset, fits).config.course.startDate).toBe('2026-10-04');
+  });
+});
+
+describe('two people add the same room', () => {
+  it('my entry is folded into the team\'s: one name, and my lessons use the team\'s entry', () => {
+    const base = emptyDataset();
+    const mine = upsertEvent(addEntity(base, 'location', { id: 'mine000001', name: 'Room 101' }), WEEK, ev('m', 0, { locationId: 'mine000001' }));
+    const theirs = upsertEvent(addEntity(base, 'location', { id: 'their00001', name: 'Room 101' }), WEEK, ev('t', 1, { locationId: 'their00001' }));
+    const { result, applied } = merge(base, mine, theirs, 'theirs');
+
+    expect(result.conflictCount).toBe(0);
+    expect(applied.dataset.config.locations).toEqual([{ id: 'their00001', name: 'Room 101' }]);
+    expect(findEvent(applied.dataset, WEEK, 'm')?.locationId).toBe('their00001');
+    expect(findEvent(applied.dataset, WEEK, 't')?.locationId).toBe('their00001');
+    expect(applied.notes).toEqual([{ code: 'entity-merged', kind: 'location', id: 'their00001', name: 'Room 101' }]);
+    expect(dangling(applied.dataset)).toEqual([]);
+  });
+
+  it('upper / lower case and blanks around the name do not make it another room', () => {
+    const base = emptyDataset();
+    const mine = addEntity(base, 'location', { id: 'mine000001', name: 'lab x' });
+    const theirs = addEntity(base, 'location', { id: 'their00001', name: 'Lab X' });
+    const { applied } = merge(base, mine, theirs, 'theirs');
+    expect(applied.dataset.config.locations).toEqual([{ id: 'their00001', name: 'Lab X' }]);
+  });
+
+  it('teachers and classes are folded inside their id lists; a subject takes the team\'s colour', () => {
+    const base = emptyDataset();
+    let mine = addEntity(base, 'teacher', { id: 'mT', name: 'Dana' });
+    mine = addEntity(mine, 'class', { id: 'mC', name: 'Class 1' });
+    mine = addEntity(mine, 'subject', { id: 'mS', name: 'Lab', color: '#DC2626' });
+    mine = upsertEvent(mine, WEEK, ev('m', 0, { teacherIds: ['mT'], classIds: ['mC'], subjectId: 'mS' }));
+    let theirs = addEntity(base, 'teacher', { id: 'tT', name: 'Dana' });
+    theirs = addEntity(theirs, 'class', { id: 'tC', name: 'Class 1' });
+    theirs = addEntity(theirs, 'subject', { id: 'tS', name: 'Lab', color: '#16A34A' });
+    const { applied } = merge(base, mine, theirs, 'theirs');
+
+    expect(findEvent(applied.dataset, WEEK, 'm')).toMatchObject({ teacherIds: ['tT'], classIds: ['tC'], subjectId: 'tS' });
+    expect(applied.dataset.config.subjects).toEqual([{ id: 'tS', name: 'Lab', color: '#16A34A' }]);
+    expect(applied.notes.map((note) => note.code)).toEqual(['entity-merged', 'entity-merged', 'entity-merged']);
+  });
+
+  it('a version of mine that is kept aside points to the team\'s entry as well', () => {
+    let base = emptyDataset();
+    base = upsertEvent(base, WEEK, ev('shared', 0, { title: 'Base' }));
+    const mine = upsertEvent(addEntity(base, 'location', { id: 'mine000001', name: 'Room 101' }), WEEK, ev('shared', 0, { title: 'Mine', locationId: 'mine000001' }));
+    const theirs = upsertEvent(addEntity(base, 'location', { id: 'their00001', name: 'Room 101' }), WEEK, ev('shared', 0, { title: 'Theirs' }));
+    const { applied } = merge(base, mine, theirs, 'aside');
+
+    expect(applied.dataset.config.locations).toEqual([{ id: 'their00001', name: 'Room 101' }]);
+    expect(applied.aside).toHaveLength(1);
+    expect(applied.aside[0].mine).toMatchObject({ title: 'Mine', locationId: 'their00001' });
+    expect(applied.aside[0].entities).toEqual([{ kind: 'location', value: { id: 'their00001', name: 'Room 101' } }]);
+    // Using it later brings no second "Room 101" back.
+    const after = applyAsideItem(applied.dataset, applied.aside[0]);
+    expect(after.config.locations).toEqual([{ id: 'their00001', name: 'Room 101' }]);
+    expect(dangling(after)).toEqual([]);
+  });
+
+  it('entries with different names stay apart, and the team\'s own list is never touched', () => {
+    const base = emptyDataset();
+    const mine = addEntity(base, 'location', { id: 'mine000001', name: 'Room 102' });
+    let theirs = addEntity(base, 'location', { id: 'their00001', name: 'Room 101' });
+    // The team itself has the same name twice (two old entries): not this merge's business.
+    theirs = { ...theirs, config: { ...theirs.config, locations: [...theirs.config.locations, { id: 'their00002', name: 'Room 101' }] } };
+    const { applied } = merge(base, mine, theirs, 'theirs');
+
+    expect(applied.dataset.config.locations.map((location) => location.id)).toEqual(['their00001', 'their00002', 'mine000001']);
+    expect(applied.notes).toEqual([]);
+  });
+});
+
+describe('course dates that do not fit together', () => {
+  it('my new start and the team\'s new end would turn the course around: the team\'s dates are kept, with a note', () => {
+    const base = updateCourse(emptyDataset(), { startDate: '2026-09-06', endDate: '2027-06-30' });
+    const mine = updateCourse(base, { startDate: '2027-01-10' });
+    const theirs = updateCourse(base, { endDate: '2026-12-31' });
+    const { result, applied } = merge(base, mine, theirs, 'theirs');
+
+    expect(result.conflictCount).toBe(0);
+    expect(applied.dataset.config.course).toMatchObject({ startDate: '2026-09-06', endDate: '2026-12-31' });
+    expect(applied.notes).toEqual([{ code: 'course-dates-reset' }]);
+  });
+
+  it('dates that fit are combined as before, without a note', () => {
+    const base = updateCourse(emptyDataset(), { startDate: '2026-09-06', endDate: '2027-06-30' });
+    const mine = updateCourse(base, { startDate: '2026-10-04' });
+    const theirs = updateCourse(base, { endDate: '2026-12-31' });
+    const { applied } = merge(base, mine, theirs, 'theirs');
+
+    expect(applied.dataset.config.course).toMatchObject({ startDate: '2026-10-04', endDate: '2026-12-31' });
+    expect(applied.notes).toEqual([]);
+  });
+
+  it('the editor itself never stores a course that ends before it starts (the name may still change)', () => {
+    const dataset = updateCourse(emptyDataset(), { name: 'DevOps', startDate: '2026-09-06', endDate: '2026-12-31' });
+    expect(updateCourse(dataset, { endDate: '2026-08-01' })).toBe(dataset);
+    expect(updateCourse(dataset, { startDate: '2027-01-10' })).toBe(dataset);
+    expect(updateCourse(dataset, { name: 'DevOps 2', startDate: '2027-01-10' }).config.course).toEqual({
+      name: 'DevOps 2',
+      startDate: '2026-09-06',
+      endDate: '2026-12-31',
+    });
+    // Both at once, to a pair that fits, is taken.
+    expect(updateCourse(dataset, { startDate: '2027-01-10', endDate: '2027-06-30' }).config.course).toMatchObject({
+      startDate: '2027-01-10',
+      endDate: '2027-06-30',
+    });
+    // The same day is a (one-day) course, and a missing date never contradicts anything.
+    expect(updateCourse(dataset, { endDate: '2026-09-06' }).config.course.endDate).toBe('2026-09-06');
+    expect(updateCourse(dataset, { endDate: null, startDate: '2030-01-01' }).config.course.startDate).toBe('2030-01-01');
+  });
+});
+
+describe('whatever a merge produces can be written and read back', () => {
+  it('the result of a merge with a restored entry survives the files unchanged', () => {
+    const base = baseWithTeacher();
+    const mine = upsertEvent(base, WEEK, ev('n1', 6, { teacherIds: ['U'] }));
+    const theirs = removeEntity(base, 'teacher', 'U');
+    const { applied } = merge(base, mine, theirs, 'theirs');
+    const back = filesToDataset(datasetToFiles(applied.dataset));
+
+    expect(back.problems).toEqual([]);
+    expect(back.dataset).toEqual(applied.dataset);
+    expect(applied.notes).toEqual([{ code: 'entity-restored', kind: 'teacher', id: 'U', name: 'Uri' }]);
+  });
+});

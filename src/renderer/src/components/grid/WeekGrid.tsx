@@ -201,8 +201,31 @@ export function WeekGrid(): ReactNode {
     actions.ensureBlame(weekStart);
   }, [weekStart, headSha]);
 
+  // People double-click buttons. The first click closes the dialog; the second one then lands
+  // on whatever lies under the button and would open a new event there. A press on the grid
+  // that is the second half of a double click begun on a dialog is therefore not taken as a wish.
+  const presses = useRef<{ time: number; x: number; y: number; onOverlay: boolean }[]>([]);
+  useEffect(() => {
+    const remember = (e: PointerEvent): void => {
+      const onOverlay = e.target instanceof Element && e.target.closest('.ui-modal-backdrop, .ui-popover') !== null;
+      presses.current = [...presses.current.slice(-1), { time: performance.now(), x: e.clientX, y: e.clientY, onOverlay }];
+    };
+    // In the capture phase, so the press is on record before the grid's own handler looks at it.
+    window.addEventListener('pointerdown', remember, true);
+    return () => window.removeEventListener('pointerdown', remember, true);
+  }, []);
+  const justClosedDialog = (): boolean => {
+    const [before, now] = presses.current;
+    if (!before || !now || !before.onOverlay) return false;
+    return now.time - before.time < DOUBLE_CLICK_MS * 2 && Math.hypot(now.x - before.x, now.y - before.y) < 8;
+  };
+
   useEffect(() => {
     setSelection(null);
+    // A drag that is still held belongs to the week that was on screen: let go of it, or the
+    // event would be written into the new week as a second copy.
+    gestureRef.current = null;
+    setGestureState(null);
     scrollRef.current?.scrollTo({ top: 0 });
   }, [weekStart]);
 
@@ -244,23 +267,28 @@ export function WeekGrid(): ReactNode {
       if (!moved) return;
       const at = locate(e.clientX, e.clientY);
       if (g.kind === 'create') {
-        const current = at ? clamp(roundToStep(at.minutes, STEP), 0, 1440) : g.current;
+        const current = at ? clamp(roundToStep(at.minutes, STEP), range.start, range.end) : g.current;
         setGesture({ ...g, moved, current });
       } else if (readOnly) {
         return;
       } else if (g.kind === 'move') {
         const duration = g.event.end - g.event.start;
-        const start = at ? clamp(roundToStep(at.minutes - g.grabOffset, STEP), 0, 1440 - duration) : g.start;
+        // Never further than the hours on screen: a slip of the hand must not park a lesson at 5 a.m.
+        const start = at ? clamp(roundToStep(at.minutes - g.grabOffset, STEP), range.start, range.end - duration) : g.start;
         setGesture({ ...g, moved, day: at?.day ?? g.day, start });
       } else {
-        const end = at ? clamp(roundToStep(at.minutes, STEP), g.event.start + STEP, 1440) : g.end;
+        const end = at ? clamp(roundToStep(at.minutes, STEP), g.event.start + STEP, Math.max(range.end, g.event.end)) : g.end;
         setGesture({ ...g, moved, end });
       }
     };
-    const onUp = (): void => {
+    const onUp = (e: PointerEvent): void => {
       const g = gestureRef.current;
       setGesture(null);
       if (!g) return;
+      // Let go outside the week (over the toolbar, outside the window) or interrupted: nothing happens.
+      const box = scrollRef.current?.getBoundingClientRect();
+      const overGrid = box !== undefined && e.clientY >= box.top && e.clientY <= box.bottom && locate(e.clientX, e.clientY) !== null;
+      if (g.moved && (e.type === 'pointercancel' || !overGrid)) return;
       if (g.kind === 'create') {
         let start: number;
         let end: number;
@@ -307,7 +335,7 @@ export function WeekGrid(): ReactNode {
   }, [gestureActive, readOnly, weekStart, range.start, ppm, grid.slotMinutes]);
 
   const onColumnDown = (day: DayIndex) => (e: ReactPointerEvent<HTMLDivElement>): void => {
-    if (e.button !== 0 || readOnly) return;
+    if (e.button !== 0 || readOnly || justClosedDialog()) return;
     if (e.target instanceof Element && e.target.closest('.wg-event, .wg-ghost')) return;
     const at = locate(e.clientX, e.clientY);
     if (!at) return;
@@ -317,7 +345,7 @@ export function WeekGrid(): ReactNode {
   };
 
   const onEventDown = (event: ScheduleEvent) => (e: ReactPointerEvent<HTMLDivElement>): void => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || justClosedDialog()) return;
     const at = locate(e.clientX, e.clientY);
     setGesture({
       kind: 'move',
@@ -345,8 +373,12 @@ export function WeekGrid(): ReactNode {
       setSelection({ kind: 'event', id: event.id, anchor: e.currentTarget });
     } else if (e.key === 'Delete' && !readOnly) {
       e.preventDefault();
+      // The keyboard stays in the week: on the next event, else the one before, else the grid itself.
+      const cards = [...(scrollRef.current?.querySelectorAll<HTMLElement>('.wg-event') ?? [])];
+      const index = cards.indexOf(e.currentTarget);
+      const neighbour = cards[index + 1] ?? cards[index - 1] ?? scrollRef.current;
       actions.deleteEvent(weekStart, event.id);
-      actions.toast({ kind: 'info', message: t('grid.deleted'), action: { label: t('grid.undo'), run: () => actions.undo() } });
+      neighbour?.focus();
     }
   };
 
@@ -395,7 +427,7 @@ export function WeekGrid(): ReactNode {
         })}
       </div>
 
-      <div className="wg-scroll" ref={scrollRef}>
+      <div className="wg-scroll" ref={scrollRef} tabIndex={-1}>
         <div className="wg-body" style={{ height: bodyHeight }}>
           <div className="wg-gutter">
             {rows.map((minute) =>

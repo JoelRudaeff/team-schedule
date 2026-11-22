@@ -39,7 +39,10 @@ function Toast({ toast }: { toast: ToastItem }): ReactNode {
     >
       <Icon name={TOAST_ICON[toast.kind]} size={18} className="ui-toast__icon" />
       <div className="ui-toast__body">
-        <div className="ui-toast__message user-text">{toast.message}</div>
+        {/* Interface sentences follow the interface direction; names inside them are isolated by the translator. */}
+        <div className="ui-toast__message" dir={toast.dir}>
+          {toast.message}
+        </div>
         {toast.detail ? <DetailsBox text={toast.detail} /> : null}
         {toast.action ? (
           <div className="ui-toast__action">
@@ -69,7 +72,9 @@ export function ToastHost(): ReactNode {
   const shown = dialogOpen ? toasts.filter((toast) => toast.kind === 'error' || toast.kind === 'warning') : toasts;
   if (shown.length === 0) return null;
   return createPortal(
-    <div className="ui-toasts" data-testid="toasts">
+    // Over a dialog the messages move to the top corner: at the bottom they would lie on the
+    // dialog's own buttons (Cancel / Apply) and the mouse could not press them.
+    <div className={dialogOpen ? 'ui-toasts ui-toasts--over-dialog' : 'ui-toasts'} data-testid="toasts">
       {shown.map((toast) => (
         <Toast key={toast.id} toast={toast} />
       ))}
@@ -160,7 +165,7 @@ export function ConfirmDialog({ dialog }: { dialog: Extract<DialogState, { type:
         </>
       }
     >
-      <p className="user-text">{dialog.message}</p>
+      <p>{dialog.message}</p>
       {dialog.detail ? <pre className="ui-confirm__detail mono ltr selectable">{dialog.detail}</pre> : null}
     </Modal>
   );
@@ -201,7 +206,7 @@ export function ErrorDialog({ dialog }: { dialog: Extract<DialogState, { type: '
         </>
       }
     >
-      <p className="selectable user-text">{dialog.message}</p>
+      <p className="selectable">{dialog.message}</p>
       {dialog.detail ? <DetailsBox text={dialog.detail} defaultOpen /> : null}
     </Modal>
   );

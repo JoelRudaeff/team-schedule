@@ -1,7 +1,8 @@
-import { useEffect, useId, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useId, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { isValidIsoDate, minutesToHHMM, timeOptions } from '@shared/dates';
 import { useT } from '../../i18n/useT';
 import { formatDate } from '../../lib/format';
+import { parseWholeNumber, textDirection } from '../../lib/inputs';
 import { Icon } from './icons';
 import type {
   BadgeProps,
@@ -148,7 +149,7 @@ export function TextInput({
   value,
   onChange,
   invalid,
-  dir = 'auto',
+  dir,
   onEnter,
   testId,
   className,
@@ -160,7 +161,7 @@ export function TextInput({
     <input
       {...rest}
       type={type ?? 'text'}
-      dir={dir}
+      dir={dir ?? textDirection(value)}
       className={cx('ui-input', invalid && 'is-invalid', className)}
       value={value}
       aria-invalid={invalid || undefined}
@@ -175,7 +176,7 @@ export function TextArea({ value, onChange, invalid, testId, className, rows, ..
   return (
     <textarea
       {...rest}
-      dir="auto"
+      dir={textDirection(value)}
       rows={rows ?? 3}
       className={cx('ui-input', 'ui-textarea', invalid && 'is-invalid', className)}
       value={value}
@@ -189,6 +190,7 @@ export function TextArea({ value, onChange, invalid, testId, className, rows, ..
 export function NumberInput({
   value,
   onChange,
+  onTextChange,
   min,
   max,
   step,
@@ -201,29 +203,37 @@ export function NumberInput({
   onEnter,
   testId,
 }: NumberInputProps): ReactNode {
+  // What is in the box is kept here, so an entry that cannot be used (too large, not a whole
+  // number) stays visible and is marked instead of vanishing while it is being typed.
+  const [text, setText] = useState(value === null ? '' : String(value));
+  useEffect(() => {
+    setText((current) => {
+      const shown = parseWholeNumber(current, min, max);
+      if (value === null) return shown === null ? current : '';
+      return shown === value ? current : String(value);
+    });
+  }, [value, min, max]);
+  const unusable = text.trim() !== '' && parseWholeNumber(text, min, max) === null;
+
   return (
     <input
       id={id}
       type="number"
       inputMode="numeric"
-      className={cx('ui-input', 'ui-input--number', 'ltr', invalid && 'is-invalid', className)}
-      value={value === null ? '' : String(value)}
+      className={cx('ui-input', 'ui-input--number', 'ltr', (invalid || unusable) && 'is-invalid', className)}
+      value={text}
       min={min}
       max={max}
       step={step ?? 1}
       placeholder={placeholder}
       disabled={disabled}
       aria-label={ariaLabel}
-      aria-invalid={invalid || undefined}
+      aria-invalid={invalid || unusable || undefined}
       onChange={(event) => {
-        const text = event.target.value.trim();
-        const parsed = Number(text);
-        const usable =
-          text !== '' &&
-          Number.isInteger(parsed) &&
-          (min === undefined || parsed >= min) &&
-          (max === undefined || parsed <= max);
-        onChange(usable ? parsed : null);
+        const next = event.target.value;
+        setText(next);
+        onTextChange?.(next);
+        onChange(parseWholeNumber(next, min, max));
       }}
       onKeyDown={enterHandler(onEnter)}
       data-testid={testId}
@@ -446,20 +456,26 @@ export function Tabs<T extends string>({ tabs, active, onChange, orientation = '
       data-testid={testId}
     >
       {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          role="tab"
-          className={cx('ui-tab', tab.id === active && 'is-active')}
-          aria-selected={tab.id === active}
-          tabIndex={tab.id === active ? 0 : -1}
-          onClick={() => onChange(tab.id)}
-          data-testid={testId ? `${testId}-${tab.id}` : undefined}
-        >
-          {tab.icon ? <Icon name={tab.icon} /> : null}
-          <span className="ui-tab__label">{tab.label}</span>
-          {tab.badge !== undefined && tab.badge !== null ? <span className="ui-tab__badge">{tab.badge}</span> : null}
-        </button>
+        <Fragment key={tab.id}>
+          {tab.group ? (
+            <div className="ui-tabs__group" role="presentation">
+              {tab.group}
+            </div>
+          ) : null}
+          <button
+            type="button"
+            role="tab"
+            className={cx('ui-tab', tab.id === active && 'is-active')}
+            aria-selected={tab.id === active}
+            tabIndex={tab.id === active ? 0 : -1}
+            onClick={() => onChange(tab.id)}
+            data-testid={testId ? `${testId}-${tab.id}` : undefined}
+          >
+            {tab.icon ? <Icon name={tab.icon} /> : null}
+            <span className="ui-tab__label">{tab.label}</span>
+            {tab.badge !== undefined && tab.badge !== null ? <span className="ui-tab__badge">{tab.badge}</span> : null}
+          </button>
+        </Fragment>
       ))}
     </div>
   );

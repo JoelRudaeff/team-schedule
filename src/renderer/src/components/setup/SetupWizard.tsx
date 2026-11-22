@@ -85,7 +85,7 @@ function ConnectForm(): ReactNode {
   const emailError = EMAIL.test(userEmail.trim()) ? null : t('setup.userEmailInvalid');
   const valid = urlError === null && nameError === null && emailError === null;
 
-  const connect = async (): Promise<void> => {
+  const connect = async (createBranch = false): Promise<void> => {
     setSubmitted(true);
     if (!valid || !urlCheck.ok || !git.found) return;
     setError(null);
@@ -94,6 +94,7 @@ function ConnectForm(): ReactNode {
       branch: branch.trim() === '' ? null : branch.trim(),
       userName: userName.trim(),
       userEmail: userEmail.trim(),
+      ...(createBranch ? { createBranch: true } : {}),
     });
     if (!result.ok) setError(result.error);
   };
@@ -155,7 +156,13 @@ function ConnectForm(): ReactNode {
       </details>
 
       {error ? (
-        <SyncProblem title={t('setup.connectFailed')} error={error} onTrust={(path) => void trustAndRetry(path)} testId="setup-error" />
+        <SyncProblem
+          title={t('setup.connectFailed')}
+          error={error}
+          onTrust={(path) => void trustAndRetry(path)}
+          onCreateBranch={() => void connect(true)}
+          testId="setup-error"
+        />
       ) : null}
 
       <Callout tone="info" title={t('setup.howItWorks')}>

@@ -3,12 +3,42 @@ import { describe, expect, it } from 'vitest';
 import type { DiffItem, ItemRef, ItemValue } from '@shared/merge';
 import type { Clash } from '@shared/model';
 import type { Lang, ScheduleConfig, ScheduleEvent } from '@shared/types';
-import { translatorFor } from '@renderer/i18n';
-import { describeClashes } from '@renderer/lib/clashText';
-import { describeDiff, describeItem, eventLine, fieldList, isEvent, isNamed, lookupConfig, scalarText } from '@renderer/lib/describe';
+import { translatorFor as realTranslatorFor, withoutIsolates, type Translator } from '@renderer/i18n';
+import { describeClashes as describeClashesRaw } from '@renderer/lib/clashText';
+import {
+  describeDiff as describeDiffRaw,
+  describeItem as describeItemRaw,
+  eventLine as eventLineRaw,
+  fieldList,
+  isEvent,
+  isNamed,
+  lookupConfig,
+  scalarText,
+} from '@renderer/lib/describe';
 import { dayName, formatDate, formatDayMonth, formatWeekRange } from '@renderer/lib/format';
 
 const W = '2026-11-22';
+
+// The texts carry invisible direction marks around names, hours and values (they have tests of
+// their own at the end of this file). The tests about WORDING compare the text without them.
+function translatorFor(lang: Lang): Translator {
+  const real = realTranslatorFor(lang);
+  return {
+    ...real,
+    t: (key, params) => withoutIsolates(real.t(key, params)),
+    tn: (key, count, params) => withoutIsolates(real.tn(key, count, params)),
+  };
+}
+const plain = <T extends { title: string; detail: string }>(text: T): T => ({
+  ...text,
+  title: withoutIsolates(text.title),
+  detail: withoutIsolates(text.detail),
+});
+const eventLine = (...args: Parameters<typeof eventLineRaw>): string => withoutIsolates(eventLineRaw(...args));
+const describeItem = (...args: Parameters<typeof describeItemRaw>): ReturnType<typeof describeItemRaw> => plain(describeItemRaw(...args));
+const describeDiff = (...args: Parameters<typeof describeDiffRaw>): ReturnType<typeof describeDiffRaw> => plain(describeDiffRaw(...args));
+const describeClashes = (...args: Parameters<typeof describeClashesRaw>): string[] => describeClashesRaw(...args).map(withoutIsolates);
+
 const en = translatorFor('en');
 const he = translatorFor('he');
 const LANGS: Lang[] = ['en', 'he'];
@@ -344,7 +374,7 @@ describe('describeDiff', () => {
     expect(describeDiff(item, CONFIG, en)).toEqual({ title: 'Course start date', detail: '(not set) → 1 Nov 2026' });
     expect(describeDiff(item, CONFIG, he)).toEqual({
       title: 'תאריך תחילת הקורס',
-      detail: `(לא הוגדר) → ${formatDate('2026-11-01', 'he')}`,
+      detail: `(לא הוגדר) ← ${formatDate('2026-11-01', 'he')}`,
     });
     expect(describeDiff(diff(scalarRef('course', 'endDate'), '2026-12-31', null), CONFIG, en)).toEqual({
       title: 'Course end date',
@@ -356,7 +386,7 @@ describe('describeDiff', () => {
     });
     expect(describeDiff(diff(scalarRef('course', 'name'), 'DevOps', 'DevOps 2'), CONFIG, he)).toEqual({
       title: 'שם הקורס',
-      detail: 'DevOps → DevOps 2',
+      detail: 'DevOps ← DevOps 2',
     });
   });
 
@@ -367,7 +397,7 @@ describe('describeDiff', () => {
     });
     expect(describeDiff(diff(scalarRef('timeGrid', 'slotMinutes'), 30, 15), CONFIG, he)).toEqual({
       title: 'אורך שורה',
-      detail: '30 דק׳ → 15 דק׳',
+      detail: '30 דק׳ ← 15 דק׳',
     });
     expect(describeDiff(diff(scalarRef('timeGrid', 'dayStart'), 480, 420), CONFIG, en)).toEqual({
       title: 'Day starts at',
@@ -375,7 +405,7 @@ describe('describeDiff', () => {
     });
     expect(describeDiff(diff(scalarRef('timeGrid', 'dayEnd'), 1200, 1440), CONFIG, he)).toEqual({
       title: 'סיום היום',
-      detail: '20:00 → 24:00',
+      detail: '20:00 ← 24:00',
     });
   });
 
@@ -387,7 +417,7 @@ describe('describeDiff', () => {
     expect(describeDiff(diff(weekTitleRef(), 'Exams', ''), CONFIG, en)).toEqual({ title, detail: 'Exams → (empty)' });
     const hebrew = describeDiff(diff(weekTitleRef(), 'מבחנים', undefined), CONFIG, he);
     expect(hebrew.title).toBe(describeItem(weekTitleRef(), 'x', CONFIG, he).title);
-    expect(hebrew.detail).toBe('מבחנים → (לא הוגדר)');
+    expect(hebrew.detail).toBe('מבחנים ← (לא הוגדר)');
   });
 
   it.each([

@@ -67,6 +67,11 @@ export interface ToastItem {
   action?: { label: string; run: () => void };
   /** Sticky toasts stay until dismissed; others disappear after a few seconds. */
   sticky?: boolean;
+  /**
+   * The direction of the language the message was written in (set by the store). A message
+   * that outlives a change of language is still laid out the way it reads.
+   */
+  dir?: 'rtl' | 'ltr';
 }
 
 export type SettingsTab = 'general' | 'repository' | 'course' | 'subjects' | 'locations' | 'teachers' | 'classes';
@@ -79,6 +84,9 @@ export interface MergeSession {
   note: string;
   /** The team tip this merge was computed against. */
   remoteSha: string;
+  /** The last shared version and my working copy the overview was computed from (the very objects). */
+  base: Dataset;
+  mine: Dataset;
   /** The team's newest version. */
   theirs: Dataset;
   /** Team files this app version cannot read (kept untouched; shown as a warning). */
@@ -122,8 +130,13 @@ export type DialogState =
   | { type: 'export-ics' }
   | { type: 'import-week'; template: WeekTemplate; fileName: string }
   | { type: 'repeat-week' }
-  /** Shown when the window is closed while there are unpublished changes. */
-  | { type: 'close-guard' }
+  /**
+   * Shown when the window is closed while there are unpublished changes or a half-written
+   * event. `covered` is the dialog that was open at that moment: it stays on screen below
+   * the question and is the open dialog again when the answer is "stay". `draft` says that
+   * the covered event dialog holds text that is not in the schedule yet.
+   */
+  | { type: 'close-guard'; covered: DialogState | null; draft: boolean }
   | {
       type: 'confirm';
       title: string;
@@ -261,7 +274,16 @@ export interface AppActions {
 
   // ── dialogs and toasts ──
   openDialog(dialog: DialogState): void;
+  /**
+   * Closes the open dialog. Ignored for the save / merge dialog while its operation is
+   * running. Closing the "close the window?" question brings back the dialog it covered.
+   */
   closeDialog(): void;
+  /**
+   * Called by the event dialog: true while it holds changes that are not in the schedule
+   * yet. Closing the window then asks first instead of throwing them away.
+   */
+  setDraftDirty(dirty: boolean): void;
   toast(toast: Omit<ToastItem, 'id'>): void;
   dismissToast(id: number): void;
 
@@ -297,8 +319,12 @@ export interface AppActions {
   applyAside(key: string): void;
   /** Forgets my kept-aside version. */
   discardAside(key: string): void;
-  /** Loads `git blame` for the week unless it is already cached for the current published version. */
-  ensureBlame(weekStart: IsoDate): void;
+  /**
+   * Loads who last edited each event of the week, unless that is already known for the
+   * current published version. (`retries` is for the store's own second try when the
+   * published version changed while the answer was on its way.)
+   */
+  ensureBlame(weekStart: IsoDate, retries?: number): void;
 
   // ── set-up and local settings ──
   /** Connects to a repository. On success the phase becomes `ready` or `needs-init` and the schedule is loaded. */

@@ -6,9 +6,10 @@ import { settings } from './settings';
 import { setup } from './setup';
 import { store } from './store';
 import { sync } from './sync';
+import { time } from './time';
 import { toolbar } from './toolbar';
 import { transfer } from './transfer';
 import { ui } from './ui';
 
 /** Hebrew texts. Must have exactly the keys of the English tables (checked by the compiler). */
-export const he: typeof en = { common, event, grid, settings, setup, store, sync, toolbar, transfer, ui };
+export const he: typeof en = { common, event, grid, settings, setup, store, sync, time, toolbar, transfer, ui };

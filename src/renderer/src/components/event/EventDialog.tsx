@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { nextPaletteColor } from '@shared/colors';
 import { addDays } from '@shared/dates';
 import { newId } from '@shared/ids';
-import { findClashes, findEvent, getWeek, hasActiveFilters, matchesFilters, normalizeEvent } from '@shared/model';
+import { deepEqual, findClashes, findEvent, getWeek, hasActiveFilters, matchesFilters, normalizeEvent } from '@shared/model';
 import type { DayIndex, ScheduleEvent } from '@shared/types';
 import { useT } from '../../i18n/useT';
 import { describeClashes } from '../../lib/clashText';
@@ -167,6 +167,26 @@ export function EventDialog({ dialog }: { dialog: Extract<DialogState, { type: '
   });
   const patch = (change: Partial<ScheduleEvent>): void => setDraft((current) => ({ ...current, ...change }));
 
+  // What the dialog started with: as long as the draft equals it, closing loses nothing.
+  const [opened] = useState(draft);
+  const dirty = useMemo(() => !deepEqual(normalizeEvent(draft), normalizeEvent(opened)), [draft, opened]);
+  const [asking, setAsking] = useState(false);
+  const keepEditing = useRef<HTMLButtonElement>(null);
+  // The store asks before the window closes over a half-written event.
+  useEffect(() => {
+    actions.setDraftDirty(dirty);
+    return () => actions.setDraftDirty(false);
+  }, [dirty]);
+  useEffect(() => {
+    if (asking) keepEditing.current?.focus();
+  }, [asking]);
+  /** Escape and the corner X: a changed draft is not thrown away without a question. */
+  const dismiss = (): void => {
+    if (asking) setAsking(false);
+    else if (dirty) setAsking(true);
+    else actions.closeDialog();
+  };
+
   // The event was removed underneath the dialog (an update from the team, an undo): nothing left to edit.
   useEffect(() => {
     if (!isNew && !existing) actions.closeDialog();
@@ -192,9 +212,9 @@ export function EventDialog({ dialog }: { dialog: Extract<DialogState, { type: '
     }
   };
   const remove = (): void => {
+    // The store offers the undo itself, tied to this very deletion.
     actions.deleteEvent(weekStart, draft.id);
     actions.closeDialog();
-    actions.toast({ kind: 'info', message: t('grid.deleted'), action: { label: t('grid.undo'), run: () => actions.undo() } });
   };
 
   const setStart = (start: number): void => {
@@ -209,22 +229,36 @@ export function EventDialog({ dialog }: { dialog: Extract<DialogState, { type: '
       subtitle={`${dayName(draft.day, lang)} · ${formatDayMonth(addDays(weekStart, draft.day), lang)}`}
       icon="calendar"
       size="lg"
-      onClose={() => actions.closeDialog()}
+      onClose={dismiss}
       testId="event-dialog"
       footer={
-        <>
-          {isNew ? null : (
-            <Button variant="ghost" icon="trash" className="ev-delete" onClick={remove} testId="event-dialog-delete">
-              {t('event.delete')}
+        asking ? (
+          <>
+            <span className="ev-discard-ask" role="alert" data-testid="event-discard-ask">
+              {t('event.discardAsk')}
+            </span>
+            <Button ref={keepEditing} onClick={() => setAsking(false)} testId="event-keep-editing">
+              {t('event.keepEditing')}
             </Button>
-          )}
-          <Button onClick={() => actions.closeDialog()} testId="event-cancel">
-            {t('common.cancel')}
-          </Button>
-          <Button variant="primary" icon="check" onClick={save} testId="event-save">
-            {isNew ? t('event.add') : t('event.save')}
-          </Button>
-        </>
+            <Button variant="danger" onClick={() => actions.closeDialog()} testId="event-discard">
+              {t('event.discard')}
+            </Button>
+          </>
+        ) : (
+          <>
+            {isNew ? null : (
+              <Button variant="ghost" icon="trash" className="ev-delete" onClick={remove} testId="event-dialog-delete">
+                {t('event.delete')}
+              </Button>
+            )}
+            <Button onClick={() => actions.closeDialog()} testId="event-cancel">
+              {t('common.cancel')}
+            </Button>
+            <Button variant="primary" icon="check" onClick={save} testId="event-save">
+              {isNew ? t('event.add') : t('event.save')}
+            </Button>
+          </>
+        )
       }
     >
       <div
@@ -313,10 +347,9 @@ export function EventDialog({ dialog }: { dialog: Extract<DialogState, { type: '
 
         {clashLines.length > 0 ? (
           <Callout tone="warning" title={t('event.clashTitle')} testId="event-clash-warning">
+            {/* A sentence of the interface: the names inside it are isolated by the translator. */}
             {clashLines.map((line) => (
-              <span key={line} className="user-text">
-                {line}
-              </span>
+              <span key={line}>{line}</span>
             ))}
           </Callout>
         ) : null}

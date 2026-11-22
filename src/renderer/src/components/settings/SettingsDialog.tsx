@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { SyncError } from '@shared/api';
 import { courseWeekCount } from '@shared/dates';
+import { isCourseInverted } from '@shared/model';
 import { checkRepoUrl, maskRepoUrl } from '@shared/repoUrl';
-import { SLOT_OPTIONS, type SlotMinutes } from '@shared/types';
+import { SLOT_OPTIONS, type IsoDate, type SlotMinutes } from '@shared/types';
 import { useT } from '../../i18n/useT';
 import { actions, useApp } from '../../store';
 import type { DialogState, SettingsTab } from '../../store/types';
@@ -222,8 +223,22 @@ function CoursePanel(): ReactNode {
   const [name, setName] = useState(course.name);
   useEffect(() => setName(course.name), [course.name]);
 
-  const weeks = courseWeekCount(course);
-  const datesInvalid = course.startDate !== null && course.endDate !== null && course.endDate < course.startDate;
+  // The two dates are a pair. While they contradict each other (the course would end before
+  // it starts) they stay here in the form; only a pair that makes sense is put into the schedule.
+  const [startDraft, setStartDraft] = useState(course.startDate);
+  const [endDraft, setEndDraft] = useState(course.endDate);
+  useEffect(() => {
+    setStartDraft(course.startDate);
+    setEndDraft(course.endDate);
+  }, [course.startDate, course.endDate]);
+  const datesInvalid = isCourseInverted({ startDate: startDraft, endDate: endDraft });
+  const setDates = (startDate: IsoDate | null, endDate: IsoDate | null): void => {
+    setStartDraft(startDate);
+    setEndDraft(endDate);
+    if (!isCourseInverted({ startDate, endDate })) actions.updateCourse({ startDate, endDate });
+  };
+
+  const weeks = datesInvalid ? null : courseWeekCount(course);
 
   return (
     <div className="st-panel">
@@ -244,13 +259,19 @@ function CoursePanel(): ReactNode {
         </Field>
         <div className="st-grid">
           <Field label={t('settings.courseStart')} htmlFor="st-course-start" hint={t('settings.courseDatesHint')}>
-            <DateInput id="st-course-start" value={course.startDate} onChange={(startDate) => actions.updateCourse({ startDate })} testId="settings-course-start" />
+            <DateInput
+              id="st-course-start"
+              value={startDraft}
+              onChange={(startDate) => setDates(startDate, endDraft)}
+              invalid={datesInvalid}
+              testId="settings-course-start"
+            />
           </Field>
           <Field label={t('settings.courseEnd')} htmlFor="st-course-end" error={datesInvalid ? t('settings.courseDatesInvalid') : null}>
             <DateInput
               id="st-course-end"
-              value={course.endDate}
-              onChange={(endDate) => actions.updateCourse({ endDate })}
+              value={endDraft}
+              onChange={(endDate) => setDates(startDraft, endDate)}
               invalid={datesInvalid}
               testId="settings-course-end"
             />
@@ -294,11 +315,11 @@ export function SettingsDialog({ dialog }: { dialog: Extract<DialogState, { type
   const [tab, setTab] = useState<SettingsTab>(dialog.tab ?? 'general');
 
   const localTabs: TabItem<SettingsTab>[] = [
-    { id: 'general', label: t('settings.tabGeneral'), icon: 'user' },
+    { id: 'general', label: t('settings.tabGeneral'), icon: 'user', group: t('settings.groupLocal') },
     { id: 'repository', label: t('settings.tabRepository'), icon: 'git-branch' },
   ];
   const sharedTabs: TabItem<SettingsTab>[] = [
-    { id: 'course', label: t('settings.tabCourse'), icon: 'clock' },
+    { id: 'course', label: t('settings.tabCourse'), icon: 'clock', group: t('settings.groupShared') },
     { id: 'subjects', label: t('settings.tabSubjects'), icon: 'palette', badge: config.subjects.length },
     { id: 'locations', label: t('settings.tabLocations'), icon: 'location', badge: config.locations.length },
     { id: 'teachers', label: t('settings.tabTeachers'), icon: 'user', badge: config.teachers.length },
@@ -322,10 +343,8 @@ export function SettingsDialog({ dialog }: { dialog: Extract<DialogState, { type
     >
       <div className="st">
         <nav className="st-nav">
-          <div className="st-nav__group">{t('settings.groupLocal')}</div>
-          <Tabs tabs={localTabs} active={tab} onChange={setTab} orientation="vertical" ariaLabel={t('settings.groupLocal')} testId="settings-tab" />
-          <div className="st-nav__group">{t('settings.groupShared')}</div>
-          <Tabs tabs={sharedTabs} active={tab} onChange={setTab} orientation="vertical" ariaLabel={t('settings.groupShared')} testId="settings-tab" />
+          {/* ONE list with two captions: with two separate lists the keyboard could only ever reach the one holding the open page. */}
+          <Tabs tabs={[...localTabs, ...sharedTabs]} active={tab} onChange={setTab} orientation="vertical" ariaLabel={t('settings.title')} testId="settings-tab" />
         </nav>
         <div className="st-content" role="tabpanel">
           {tab === 'general' ? <GeneralPanel /> : null}
