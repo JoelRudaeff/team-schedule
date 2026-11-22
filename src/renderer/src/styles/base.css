@@ -1,0 +1,247 @@
+/*
+ * Global base styles: reset, typography, app shell and a few helper classes.
+ * Component styles live next to their components and build on tokens.css.
+ *
+ * RTL: the document direction follows the UI language (<html dir="rtl"> for Hebrew).
+ * All CSS must therefore use LOGICAL properties (margin-inline-start, padding-inline-end,
+ * inset-inline-start, border-inline-start, text-align: start …) and never left / right.
+ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--fs-md);
+  line-height: var(--lh);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+input,
+textarea,
+[contenteditable='true'] {
+  user-select: text;
+  cursor: text;
+}
+
+a {
+  color: var(--primary);
+  cursor: pointer;
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+::selection {
+  background: var(--primary-border);
+}
+
+/* Thin, quiet scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-pill);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+  background-clip: content-box;
+  border: 2px solid transparent;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ───────────── helpers ───────────── */
+
+/* Force left-to-right for times, date ranges, paths, URLs, hashes — also inside Hebrew text. */
+.ltr {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+/* Text typed by users can be Hebrew or English: let the browser pick the direction. */
+.user-text {
+  unicode-bidi: plaintext;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+
+.muted {
+  color: var(--text-2);
+}
+
+.faint {
+  color: var(--text-3);
+}
+
+.selectable {
+  user-select: text;
+  cursor: text;
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Icons that point "forward/back" must be mirrored in right-to-left layouts. */
+[dir='rtl'] .flip-rtl {
+  transform: scaleX(-1);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ───────────── app shell ───────────── */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+}
+
+.app__main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app__banner {
+  flex: 0 0 auto;
+  padding: var(--sp-2) var(--sp-4) 0;
+}
+
+.splash {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4);
+  color: var(--text-2);
+}
+
+.splash__title {
+  font-size: var(--fs-2xl);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.fatal {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-8);
+}
+
+.fatal__card {
+  max-width: 640px;
+  background: var(--surface);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow);
+  padding: var(--sp-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.fatal__title {
+  font-size: var(--fs-xl);
+  font-weight: 600;
+}
+
+.fatal__detail {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--sp-3);
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media print {
+  body {
+    background: #fff;
+    overflow: visible;
+  }
+}

@@ -1,0 +1,107 @@
+/*
+ * Design tokens — the only place where raw colours, sizes and shadows are defined.
+ * Component CSS must use these variables (never hard-coded colours, except colours that
+ * come from user data such as a subject's colour).
+ */
+:root {
+  /* Surfaces */
+  --bg: #f3f5f9;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --surface-3: #eef2f7;
+  --overlay: rgba(15, 23, 42, 0.45);
+
+  /* Lines */
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --grid-line: #e8ecf2;
+  --grid-line-strong: #d5dbe5;
+
+  /* Text */
+  --text: #0f172a;
+  --text-2: #475569;
+  --text-3: #8492a6;
+  --text-on-primary: #ffffff;
+
+  /* Brand / actions */
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-active: #1e40af;
+  --primary-soft: #eff5ff;
+  --primary-border: #bfd4fb;
+  --focus-ring: rgba(37, 99, 235, 0.35);
+
+  /* Status */
+  --success: #15803d;
+  --success-soft: #edfdf3;
+  --success-border: #b4e6c5;
+  --warning: #b45309;
+  --warning-soft: #fff8e6;
+  --warning-border: #f5d48a;
+  --danger: #dc2626;
+  --danger-hover: #b91c1c;
+  --danger-soft: #fef1f1;
+  --danger-border: #f6c1c1;
+  --info: #0369a1;
+  --info-soft: #eef8ff;
+  --info-border: #b6dcf5;
+
+  /* Sync meaning (used consistently in the status bar, grid markers and merge overview) */
+  --mine: #7c3aed; /* my unpublished changes */
+  --mine-soft: #f4effe;
+  --mine-border: #d6c4fb;
+  --theirs: #0284c7; /* incoming team changes */
+  --theirs-soft: #e9f6fd;
+  --theirs-border: #b3defa;
+  --conflict: #dc2626; /* collisions */
+  --conflict-soft: #fef1f1;
+  --aside: #b45309; /* versions kept aside */
+  --aside-soft: #fff8e6;
+
+  /* Typography */
+  --font: 'Segoe UI Variable Text', 'Segoe UI', 'Arial Hebrew', Arial, sans-serif;
+  --font-mono: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 26px;
+  --lh: 1.45;
+
+  /* Spacing (4px scale) */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+
+  /* Shape */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-pill: 999px;
+
+  /* Elevation */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow: 0 2px 8px rgba(15, 23, 42, 0.1);
+  --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.18);
+
+  /* Control sizes */
+  --control-h: 32px;
+  --control-h-sm: 26px;
+
+  /* Layers */
+  --z-sticky: 10;
+  --z-toolbar: 20;
+  --z-popover: 100;
+  --z-modal: 200;
+  --z-toast: 300;
+  --z-busy: 400;
+
+  --transition: 120ms ease;
+}

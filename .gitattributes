@@ -1,0 +1,5 @@
+# Source files are kept with "\n" line ends on every computer; batch files need Windows line ends.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.png binary
+*.ico binary

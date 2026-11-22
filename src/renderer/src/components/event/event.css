@@ -1,0 +1,102 @@
+.ev-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ev-when {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.ev-when > .ui-field:first-child {
+  flex: 1 1 220px;
+}
+
+.ev-when__length {
+  padding-bottom: 7px;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.ev-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.ev-subjects {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.ev-subject {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--control-h-sm);
+  max-width: 220px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.ev-subject:hover {
+  background: var(--surface-3);
+}
+
+.ev-subject.is-selected {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  box-shadow: 0 0 0 1px var(--primary);
+  font-weight: 600;
+}
+
+.ev-subject__none {
+  width: 12px;
+  height: 12px;
+  border: 1px dashed var(--text-3);
+  border-radius: 50%;
+}
+
+.ev-new-subject {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.ev-new-subject .ui-color {
+  padding: 0;
+}
+
+.ev-location {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ev-location__row {
+  display: flex;
+  gap: 6px;
+}
+
+.ev-delete {
+  margin-inline-end: auto;
+  color: var(--danger);
+}
+
+.ev-hint {
+  font-size: var(--fs-sm);
+}

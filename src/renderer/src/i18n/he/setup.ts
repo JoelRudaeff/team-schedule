@@ -1,0 +1,50 @@
+import type { SetupMessages } from '../en/setup';
+
+/** "setup" texts (Hebrew). Must have exactly the keys of the English table. */
+export const setup: SetupMessages = {
+  welcomeTitle: 'ברוכים הבאים ללו״ז צוות',
+  welcomeText: 'הלו״ז השבועי של הצוות, שמור במאגר git משותף כך שכולם רואים את אותו לו״ז.',
+  language: 'שפה',
+
+  gitMissingTitle: 'Git אינו מותקן במחשב הזה',
+  gitMissingText: 'התוכנה משתמשת ב-Git for Windows כדי לשתף את הלו״ז. יש להתקין אותו, לחזור לכאן וללחוץ על ״בדיקה חוזרת״.',
+  gitDownload: 'הורדת Git for Windows',
+  gitRecheck: 'בדיקה חוזרת',
+  gitLocate: 'איתור git.exe…',
+  gitFound: 'Git {version} מותקן',
+  gitNotValid: 'הקובץ שנבחר אינו Git.',
+
+  connectTitle: 'התחברות למאגר של הצוות',
+  howItWorks: 'איך זה עובד',
+  howItWorksText:
+    'במחשב הזה נשמר עותק של הלו״ז. ״שמירה״ שולחת את השינויים שלך לצוות ו״עדכון״ מביא את השינויים של האחרים. שום דבר לא נשלח לפני אישור.',
+  repoUrl: 'כתובת המאגר',
+  repoUrlHint: 'לדוגמה ⁦https://github.com/team/schedule.git⁩, או תיקייה משותפת כמו ⁦\\\\server\\share\\schedule.git⁩',
+  repoUrlEmpty: 'יש להזין את כתובת המאגר.',
+  repoUrlUnsupported: 'זו אינה נראית כתובת של מאגר git.',
+  repoUrlUnsafe: 'הכתובת הזו אינה מותרת.',
+  userName: 'השם שלך',
+  userNameHint: 'חברי הצוות רואים אותו ליד כל שינוי שלך.',
+  userNameRequired: 'יש להזין שם.',
+  userEmail: 'הדוא״ל שלך',
+  userEmailInvalid: 'יש להזין כתובת דוא״ל תקינה.',
+  advanced: 'מתקדם',
+  branch: 'ענף (branch)',
+  branchHint: 'אפשר להשאיר ריק כדי להשתמש בענף ברירת המחדל של המאגר.',
+  connect: 'התחברות',
+  connectFailed: 'ההתחברות נכשלה',
+  trustText: 'Git מסרב להשתמש בתיקייה כי היא שייכת למשתמש Windows אחר. זה רגיל בתיקייה משותפת; אפשר להורות ל-Git לסמוך עליה.',
+  trustAndRetry: 'אישור התיקייה וניסיון חוזר',
+
+  createTitle: 'יצירת הלו״ז של הצוות',
+  createText: 'המאגר ״{name}״ מחובר, אך עדיין אין בו לו״ז.',
+  courseName: 'שם הקורס',
+  courseNamePlaceholder: 'לדוגמה: DevOps 2027',
+  courseStart: 'תחילת הקורס',
+  courseEnd: 'סיום הקורס',
+  courseDatesHint: 'לא חובה. עם תאריך התחלה, השבועות ממוספרים מהשבוע הראשון של הקורס.',
+  courseDatesInvalid: 'תאריך הסיום אינו יכול להיות לפני תאריך ההתחלה.',
+  createInfo: 'הפעולה יוצרת את קובצי הלו״ז ומעלה אותם למאגר (git commit ו-push). חברי צוות שיתחברו אחר כך יקבלו את הלו״ז הזה.',
+  create: 'יצירת לו״ז',
+  otherRepo: 'מאגר אחר',
+};

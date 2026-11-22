@@ -1,0 +1,511 @@
+/* Save confirmation, merge overview, kept-aside list. Uses the sync colours from tokens.css:
+   --theirs (the team), --mine (my changes), --conflict (collisions), --aside (kept aside). */
+
+.sy-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sy-section > h3 {
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+/* ── what saving means ── */
+
+.sy-explain {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--info-border);
+  border-radius: var(--radius-lg);
+  background: var(--info-soft);
+}
+
+.sy-explain ol {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sy-explain li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text-2);
+}
+
+.sy-explain li .ui-icon {
+  margin-top: 3px;
+  color: var(--info);
+}
+
+/* ── lists of changes ── */
+
+.sy-changes {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.sy-change {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sy-change:last-child {
+  border-bottom: 0;
+}
+
+.sy-change__mark {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--mine-soft);
+  color: var(--mine);
+}
+
+.sy-changes--theirs .sy-change__mark {
+  background: var(--theirs-soft);
+  color: var(--theirs);
+}
+
+.sy-change--deleted .sy-change__mark {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.sy-change__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sy-change__title {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.sy-change__detail {
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+/* ── merge: the picture ── */
+
+.sy-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+}
+
+.sy-graph {
+  width: 100%;
+  max-height: 150px;
+  font-family: var(--font);
+}
+
+.sy-graph__lane {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.sy-graph__lane--theirs {
+  stroke: var(--theirs);
+}
+
+.sy-graph__lane--mine {
+  stroke: var(--mine);
+}
+
+.sy-graph__node {
+  stroke: var(--surface);
+  stroke-width: 2.5;
+}
+
+.sy-graph__node--base {
+  fill: var(--text-3);
+}
+
+.sy-graph__node--theirs {
+  fill: var(--theirs);
+}
+
+.sy-graph__node--mine {
+  fill: var(--mine);
+}
+
+.sy-graph__node--result {
+  fill: var(--success);
+}
+
+.sy-graph__node--result.is-conflict {
+  fill: var(--conflict);
+}
+
+.sy-graph__mark {
+  fill: #fff;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.sy-graph__check {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sy-graph__caption {
+  fill: var(--text-2);
+  font-size: 12px;
+}
+
+.sy-graph__caption.is-conflict {
+  fill: var(--conflict);
+  font-weight: 600;
+}
+
+.sy-graph__caption.is-ok {
+  fill: var(--success);
+  font-weight: 600;
+}
+
+.sy-graph__label {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sy-graph__label--theirs,
+.sy-graph__count--theirs {
+  fill: var(--theirs);
+}
+
+.sy-graph__label--mine,
+.sy-graph__count--mine {
+  fill: var(--mine);
+}
+
+.sy-graph__count {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sy-graph__author {
+  fill: var(--text-2);
+  font-size: 11px;
+}
+
+.sy-counts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* ── merge: week maps ── */
+
+.sy-weeks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.sy-week {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.sy-week__title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.sy-week__grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.sy-week__day-name {
+  margin-bottom: 3px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sy-week__column {
+  position: relative;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+}
+
+.sy-block {
+  position: absolute;
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: var(--border-strong);
+}
+
+.sy-block--context {
+  background: var(--border-strong);
+  opacity: 0.6;
+}
+
+.sy-block--same {
+  background: var(--text-3);
+}
+
+.sy-block--theirs {
+  background: var(--theirs);
+}
+
+.sy-block--mine {
+  background: var(--mine);
+}
+
+.sy-block--both {
+  background: linear-gradient(135deg, var(--theirs) 50%, var(--mine) 50%);
+}
+
+.sy-block--conflict-mine {
+  background: var(--mine);
+  box-shadow: 0 0 0 2px var(--conflict);
+  cursor: pointer;
+  z-index: 1;
+}
+
+.sy-block--conflict-theirs {
+  background: var(--theirs);
+  box-shadow: 0 0 0 2px var(--conflict);
+  cursor: pointer;
+  z-index: 1;
+}
+
+/* Something that is gone in this version: only its outline remains, hatched. */
+.sy-block.is-removed {
+  background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.75) 0 3px, transparent 3px 6px);
+  opacity: 0.75;
+}
+
+.sy-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+.sy-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sy-legend .sy-block {
+  position: static;
+  width: 14px;
+  height: 10px;
+  box-shadow: none;
+}
+
+.sy-legend .sy-block--conflict-mine {
+  box-shadow: 0 0 0 2px var(--conflict);
+}
+
+/* ── merge: collisions ── */
+
+.sy-conflicts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sy-conflict {
+  border: 1px solid var(--danger-border);
+  border-inline-start: 4px solid var(--conflict);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.sy-conflict--aside {
+  border-color: var(--warning-border);
+  border-inline-start-color: var(--aside);
+}
+
+.sy-conflict__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--conflict-soft);
+  color: var(--conflict);
+}
+
+.sy-conflict--aside .sy-conflict__head {
+  background: var(--aside-soft);
+  color: var(--aside);
+}
+
+.sy-conflict__title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.sy-conflict__reason {
+  margin-inline-start: auto;
+  font-size: var(--fs-sm);
+}
+
+.sy-conflict__versions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.sy-version {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.sy-version + .sy-version {
+  border-inline-start: 1px solid var(--border);
+}
+
+.sy-version__label {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sy-version--mine .sy-version__label {
+  color: var(--mine);
+}
+
+.sy-version--theirs .sy-version__label {
+  color: var(--theirs);
+}
+
+.sy-version__named {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sy-conflict__choice {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.sy-conflict__choice--buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ── merge: the decision ── */
+
+.sy-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sy-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  text-align: start;
+  cursor: pointer;
+  transition:
+    border-color var(--transition),
+    background var(--transition);
+}
+
+.sy-option:hover {
+  background: var(--surface-2);
+}
+
+.sy-option.is-selected {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.sy-option__radio {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 2px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+.sy-option.is-selected .sy-option__radio {
+  border-color: var(--primary);
+  background: radial-gradient(circle, var(--primary) 0 45%, var(--surface) 50%);
+}
+
+.sy-option__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sy-option__body span {
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+.sy-fold > summary {
+  margin-bottom: 6px;
+  color: var(--text-2);
+  font-weight: 600;
+  cursor: pointer;
+}

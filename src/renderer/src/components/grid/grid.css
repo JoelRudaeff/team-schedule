@@ -1,0 +1,499 @@
+/* Week grid. Columns flow in the document direction: Sunday is on the right in Hebrew. */
+
+.wg {
+  --wg-gutter: 58px;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin: 12px 14px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.wg--message {
+  padding: 24px;
+  justify-content: flex-start;
+}
+
+/* "You are looking at the team's version; this week cannot be changed here." */
+.wg-notice {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--warning-border);
+  background: var(--warning-soft);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.wg-notice .ui-icon {
+  flex: 0 0 auto;
+  color: var(--warning);
+}
+
+.wg-head,
+.wg-body {
+  display: grid;
+  grid-template-columns: var(--wg-gutter) repeat(7, minmax(0, 1fr));
+}
+
+.wg-head {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--grid-line-strong);
+  background: var(--surface-2);
+  /* Keeps the header aligned with the body, which has a scrollbar. */
+  scrollbar-gutter: stable;
+  overflow: hidden;
+}
+
+.wg-corner {
+  border-inline-end: 1px solid var(--grid-line);
+}
+
+.wg-day-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 7px 4px 6px;
+  border-inline-end: 1px solid var(--grid-line);
+  min-width: 0;
+}
+
+.wg-day-head:last-child {
+  border-inline-end: 0;
+}
+
+.wg-day-head__name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.wg-day-head__date {
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.wg-day-head.is-today .wg-day-head__name {
+  color: var(--primary);
+}
+
+.wg-day-head.is-today .wg-day-head__date {
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  background: var(--primary);
+  color: #fff;
+}
+
+.wg-day-head.is-outside {
+  color: var(--text-3);
+}
+
+.wg-day-head.is-outside .wg-day-head__date {
+  color: var(--text-3);
+}
+
+.wg-scroll {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+.wg-body {
+  position: relative;
+  min-height: 100%;
+  /* Room for the last time label and for dropping an event on the last row. */
+  margin-bottom: 14px;
+}
+
+.wg-gutter {
+  position: relative;
+  border-inline-end: 1px solid var(--grid-line);
+}
+
+.wg-gutter__label {
+  position: absolute;
+  inset-inline-end: 8px;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.wg-gutter__label:first-child {
+  transform: translateY(2px);
+}
+
+.wg-lines {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: var(--wg-gutter);
+  inset-inline-end: 0;
+  pointer-events: none;
+}
+
+.wg-line {
+  position: absolute;
+  inset-inline: 0;
+  border-top: 1px solid var(--grid-line);
+}
+
+.wg-line.is-hour {
+  border-top-color: var(--grid-line-strong);
+}
+
+.wg-col {
+  position: relative;
+  border-inline-end: 1px solid var(--grid-line);
+  cursor: cell;
+  min-width: 0;
+}
+
+.wg-col:last-child {
+  border-inline-end: 0;
+}
+
+.wg-col.is-today {
+  background: rgba(37, 99, 235, 0.035);
+}
+
+.wg-col.is-outside {
+  background: repeating-linear-gradient(135deg, transparent 0 8px, rgba(100, 116, 139, 0.07) 8px 9px);
+}
+
+/* ── events ── */
+
+.wg-event {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 6px 2px;
+  border-radius: 5px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.2);
+  font-size: var(--fs-sm);
+  line-height: 1.3;
+  overflow: hidden;
+  cursor: pointer;
+  touch-action: none;
+  transition:
+    box-shadow var(--transition),
+    filter var(--transition);
+}
+
+.wg-event:hover {
+  z-index: 2;
+  filter: brightness(1.06);
+  box-shadow: 0 3px 8px rgba(15, 23, 42, 0.28);
+}
+
+.wg-event:focus-visible,
+.wg-event.is-selected {
+  z-index: 3;
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+.wg-event.is-dimmed {
+  opacity: 0.35;
+}
+
+.wg-event--preview {
+  z-index: 5;
+  opacity: 0.9;
+  pointer-events: none;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.35);
+}
+
+.wg-event__title {
+  /* Room for the marks in the corner. */
+  padding-inline-end: 14px;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.wg-event__time {
+  opacity: 0.92;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.wg-event__line {
+  min-width: 0;
+  opacity: 0.92;
+}
+
+/*
+ * Text typed by the team runs in its own direction, so a text too long for its box loses
+ * its END ("Docker ba…" — not "…er basics" in the Hebrew interface). It still sits on the
+ * interface's side of the box, which is why the alignment is spelled out per interface
+ * direction: `start` would follow the text's own direction here.
+ */
+.wg-event__title > bdi,
+.wg-event__line > bdi,
+.wg-ghost__title > bdi {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+html[dir='rtl'] .wg-event__title > bdi,
+html[dir='rtl'] .wg-event__line > bdi,
+html[dir='rtl'] .wg-ghost__title > bdi {
+  text-align: right;
+}
+
+.wg-event.is-small {
+  padding-top: 2px;
+}
+
+.wg-event.is-small .wg-event__line {
+  display: none;
+}
+
+.wg-event.is-tiny {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding-block: 0;
+}
+
+.wg-event.is-tiny .wg-event__line {
+  display: none;
+}
+
+.wg-event.is-tiny .wg-event__title {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.wg-event__marks {
+  position: absolute;
+  inset-block-start: 3px;
+  inset-inline-end: 4px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* "Not published yet": a dot in the colour used for my changes everywhere. */
+.wg-event__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--mine);
+  box-shadow: 0 0 0 2px #fff;
+}
+
+.wg-event__resize {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+/* ── my versions kept aside ── */
+
+.wg-ghost {
+  position: absolute;
+  z-index: 4;
+  inset-inline-end: 2px;
+  width: 62%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 2px 6px;
+  border: 2px dashed var(--aside);
+  border-radius: 5px;
+  background: repeating-linear-gradient(135deg, rgba(255, 248, 230, 0.94) 0 8px, rgba(253, 236, 200, 0.94) 8px 16px);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.3;
+  text-align: start;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.wg-ghost:hover {
+  box-shadow: var(--shadow);
+}
+
+.wg-ghost__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--aside);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.wg-ghost__title {
+  max-width: 100%;
+  min-width: 0;
+  font-weight: 600;
+}
+
+/* ── selection, now line, hints ── */
+
+.wg-selection {
+  position: absolute;
+  z-index: 5;
+  inset-inline: 2px;
+  padding: 2px 6px;
+  border: 1px solid var(--primary);
+  border-radius: 5px;
+  background: rgba(37, 99, 235, 0.16);
+  color: var(--primary-active);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.wg-now {
+  position: absolute;
+  z-index: 6;
+  inset-inline: 0;
+  height: 0;
+  border-top: 2px solid var(--danger);
+  pointer-events: none;
+}
+
+.wg-now::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: -4px;
+  top: -5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+.wg-hint {
+  position: absolute;
+  inset-block-start: 96px;
+  inset-inline: var(--wg-gutter) 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-3);
+  text-align: center;
+  pointer-events: none;
+}
+
+.wg-hint strong {
+  color: var(--text-2);
+}
+
+.wg-hint--action {
+  pointer-events: auto;
+  width: fit-content;
+  margin-inline: auto;
+  padding: 16px 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+/* ── popovers ── */
+
+.wg-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 300px;
+  padding: 14px;
+}
+
+.wg-pop__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wg-pop__head h3 {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.wg-pop__aside-icon {
+  color: var(--aside);
+}
+
+.wg-pop__blame {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+.wg-pop__blame .ui-icon {
+  margin-top: 2px;
+  color: var(--text-3);
+}
+
+.wg-pop__clashes,
+.wg-pop__aside {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius);
+  background: var(--warning-soft);
+  font-size: var(--fs-sm);
+}
+
+.wg-pop__clashes strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--warning);
+}
+
+.wg-pop__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wg-pop__delete {
+  color: var(--danger);
+}
+
+@media print {
+  .wg {
+    margin: 0;
+    border: 0;
+    box-shadow: none;
+    overflow: visible;
+  }
+
+  .wg-scroll {
+    overflow: visible;
+  }
+}
