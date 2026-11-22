@@ -227,6 +227,11 @@ Design notes worth knowing before changing things:
   room called "Room A" cannot turn a Hebrew sentence around. Compare such texts in tests
   with `withoutIsolates()`.
 
+## License
+
+[MIT](LICENSE) — use it, change it and pass it on, as long as the copyright notice and the
+license text stay with it. It comes without any warranty.
+
 ---
 
 ## מדריך קצר בעברית
@@ -253,3 +258,5 @@ Design notes worth knowing before changing things:
    על ״שחזור הגרסה של הצוות״. סגירת החלון באמצע כתיבת אירוע שואלת קודם, ו״חזרה״ מחזירה אליו כמו שהיה.
 9. **מקלדת** – אפשר לעבוד בלי עכבר: Tab וחיצים לתנועה, Enter פותח אירוע, Delete מוחק (עם ״ביטול״),
    Ctrl+S שומר לצוות, PageUp / PageDown מחליפים שבוע, ו-Esc סוגר.
+
+**רישיון** – [MIT](LICENSE): מותר להשתמש, לשנות ולהפיץ, כל עוד הודעת זכויות היוצרים ונוסח הרישיון נשארים עם התוכנה. אין אחריות.

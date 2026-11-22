@@ -3,6 +3,7 @@
   "productName": "Team Schedule",
   "version": "1.0.1",
   "description": "Weekly team schedule (Hebrew / English) that syncs through a shared git repository",
+  "license": "MIT",
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
