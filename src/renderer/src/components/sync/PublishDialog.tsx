@@ -2,12 +2,13 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { useT } from '../../i18n/useT';
 import { describeDiff, lookupConfig } from '../../lib/describe';
 import { actions, useApp } from '../../store';
+import type { DialogState } from '../../store/types';
 import { Button, Field, Icon, Modal, TextInput } from '../ui';
 import { ChangeList, type ChangeRow } from './ChangeList';
 import './sync.css';
 
 /** The confirmation before anything goes to the team: what saving means, and exactly what will be sent. */
-export function PublishDialog(): ReactNode {
+export function PublishDialog({ dialog }: { dialog: Extract<DialogState, { type: 'publish' }> }): ReactNode {
   const tr = useT();
   const { t, tn } = tr;
   const diff = useApp((s) => s.diff);
@@ -15,7 +16,7 @@ export function PublishDialog(): ReactNode {
   const working = useApp((s) => s.working);
   const userName = useApp((s) => s.settings.userName);
   const busy = useApp((s) => s.busy);
-  const [note, setNote] = useState('');
+  const [note, setNote] = useState(dialog.note ?? '');
 
   const rows = useMemo((): ChangeRow[] => {
     const config = lookupConfig(working.config, base.config);

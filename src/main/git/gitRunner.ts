@@ -16,7 +16,7 @@
  *    GCM_INTERACTIVE untouched so Git Credential Manager can ask).
  *  - stdout and stderr are collected as Buffers and decoded as UTF-8.
  *  - `timeoutMs` (default 30 000): on expiry the process tree is killed and the call fails
- *    with code `timeout`.
+ *    with code `timeout`. The same happens when `signal` is aborted.
  *  - Exit code 0 (or one listed in `okExitCodes`) resolves; anything else rejects with a
  *    GitError built by classifyGitFailure().
  *
@@ -52,6 +52,11 @@ export interface GitRunOptions {
   input?: string | Buffer;
   /** Extra exit codes that are not errors (e.g. [1] for `git diff --quiet`). */
   okExitCodes?: number[];
+  /**
+   * Ends the command when it is aborted: the process tree is stopped and the call fails with
+   * code `timeout`, exactly as when the time limit runs out.
+   */
+  signal?: AbortSignal;
 }
 
 export interface GitResult {
@@ -106,6 +111,7 @@ interface ProcessRequest {
   env: NodeJS.ProcessEnv;
   input?: string | Buffer;
   timeoutMs: number;
+  signal?: AbortSignal;
 }
 
 interface ProcessOutcome {
@@ -156,8 +162,22 @@ function execute(request: ProcessRequest): Promise<ProcessOutcome> {
       settled = true;
       clearTimeout(limitTimer);
       clearTimeout(graceTimer);
+      request.signal?.removeEventListener('abort', stop);
       resolve({ exitCode, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), timedOut, startError });
     };
+
+    /** The time limit ran out, or the caller gave up: the whole process tree is ended. */
+    function stop(): void {
+      if (settled || timedOut) return;
+      timedOut = true;
+      killProcessTree(child);
+      graceTimer = setTimeout(() => {
+        // A process that escaped the kill could hold the pipes open forever.
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        finish(null, null);
+      }, KILL_GRACE_MS);
+    }
 
     let child: ChildProcess;
     try {
@@ -174,16 +194,9 @@ function execute(request: ProcessRequest): Promise<ProcessOutcome> {
       return;
     }
 
-    limitTimer = setTimeout(() => {
-      timedOut = true;
-      killProcessTree(child);
-      graceTimer = setTimeout(() => {
-        // A process that escaped the kill could hold the pipes open forever.
-        child.stdout?.destroy();
-        child.stderr?.destroy();
-        finish(null, null);
-      }, KILL_GRACE_MS);
-    }, request.timeoutMs);
+    limitTimer = setTimeout(stop, request.timeoutMs);
+    if (request.signal?.aborted) stop();
+    else request.signal?.addEventListener('abort', stop, { once: true });
 
     child.stdout?.on('data', (chunk: Buffer) => stdout.push(chunk));
     child.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk));
@@ -370,6 +383,7 @@ export function createGitRunner(gitPath: string): GitRunner {
         env: gitEnvironment(options.interactive === true),
         input: options.input,
         timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        signal: options.signal,
       });
       if (outcome.startError !== null) {
         throw new GitError(await describeStartFailure(gitPath, options.cwd, outcome.startError), null);

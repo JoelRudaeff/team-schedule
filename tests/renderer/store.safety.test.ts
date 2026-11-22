@@ -439,13 +439,29 @@ describe('a decision on an overview that went out of date never becomes a save n
 
     expect(api.team.length).toBe(commits);
     expect(api.calls).not.toContain('publish');
-    expect(store.getState().dialog?.type).toBe('publish');
+    // It is the same save that is asked about again, so the question comes back with the note
+    // that was typed for it (the dialog's note box starts with it).
+    const asked = store.getState().dialog;
+    expect(asked).toEqual({ type: 'publish', note: 'my note' });
     expect(store.getState().busy).toBeNull();
 
-    await store.actions.confirmPublish('my note');
+    // Confirming with what the box holds sends the save with that note.
+    if (asked?.type !== 'publish') throw new Error('expected the Save question');
+    await store.actions.confirmPublish(asked.note ?? '');
     expect(api.team.length).toBe(commits + 1);
-    expect(findEvent(parse(api.team[api.team.length - 1].files), W, 'a')?.title).toBe('Mine');
+    expect(api.tip.message.split('\n')[0]).toBe('my note');
+    expect(findEvent(parse(api.tip.files), W, 'a')?.title).toBe('Mine');
     expect(store.getState().diff).toEqual([]);
+  });
+
+  it('the Save question that the user opens is empty as always: a note belongs to one save only', async () => {
+    const { store } = await staleOverview();
+    await store.actions.resolveMerge({ resolutions: {}, defaultResolution: 'theirs', then: 'publish' });
+    expect(store.getState().dialog).toEqual({ type: 'publish', note: 'my note' });
+
+    store.actions.closeDialog();
+    store.actions.requestPublish();
+    expect(store.getState().dialog).toEqual({ type: 'publish' });
   });
 });
 
@@ -485,5 +501,82 @@ describe('the "Event deleted · Undo" message, when something else touches the u
     store.actions.undo();
     store.actions.undo();
     expect(getWeek(store.getState().working, W).events.map((event) => event.id)).toEqual(['a', 'b', 'c', 'd']);
+  });
+});
+
+// The cases below were found by the second review of pull request #1.
+
+describe('two list entries of the same name that an update folds into one', () => {
+  const said = (store: AppStoreHandle): string[] => messages(store);
+  const FOLDED = 'Location "Room 101" was in the list twice, once from you and once from the team. The two entries were combined into one.';
+
+  it('I renamed a room, the team added one of that name: the team\'s new entry is folded into mine, and the message does not say the opposite', async () => {
+    const { api, store } = await start(dataset([{ ...A, locationId: 'l1' }]));
+    store.actions.updateEntity('location', 'l1', { name: 'Room 101' });
+    await store.whenIdle();
+    const teamConfig: ScheduleConfig = { ...CONFIG, locations: [...CONFIG.locations, { id: 'team1', name: 'Room 101' }] };
+    const teamLesson = ev('t', { day: 1, locationId: 'team1', title: 'Team lesson' });
+    api.teammatePublishes(files(dataset([{ ...A, locationId: 'l1' }, teamLesson], teamConfig)));
+
+    await store.actions.requestUpdate();
+
+    const state = store.getState();
+    expect(state.working.config.locations).toEqual([
+      { id: 'l1', name: 'Room 101' },
+      { id: 'l2', name: 'Room 2' },
+    ]);
+    // The team's lesson now uses the entry that stayed: mine.
+    expect(findEvent(state.working, W, 't')?.locationId).toBe('l1');
+    expect(said(store)).toContain(FOLDED);
+    expect(said(store).join('\n')).not.toMatch(/added twice|the team's entry/);
+  });
+
+  it('both of us added the room: my entry is folded into the team\'s, with the same message', async () => {
+    const { api, store } = await start(dataset([A]));
+    store.actions.addEntity('location', 'Room 101');
+    await store.whenIdle();
+    const mineId = store.getState().working.config.locations.find((location) => location.name === 'Room 101')?.id;
+    if (!mineId) throw new Error('the room was not added');
+    store.actions.saveEvent(W, { ...A, locationId: mineId });
+    await store.whenIdle();
+    const teamConfig: ScheduleConfig = { ...CONFIG, locations: [...CONFIG.locations, { id: 'team1', name: 'Room 101' }] };
+    api.teammatePublishes(files(dataset([A], teamConfig)));
+
+    await store.actions.requestUpdate();
+
+    const state = store.getState();
+    expect(state.working.config.locations.map((location) => location.id)).toEqual(['l1', 'l2', 'team1']);
+    expect(findEvent(state.working, W, 'a')?.locationId).toBe('team1');
+    expect(said(store)).toContain(FOLDED);
+  });
+
+  it('the Hebrew text does not say who added what, or whose entry stayed, either', () => {
+    const he = translatorFor('he');
+    const text = withoutIsolates(he.t('store.noteMerged', { kind: he.t('store.kindLocation'), name: 'חדר 101' }));
+    expect(text).toContain('חדר 101');
+    expect(text).not.toMatch(/נוסף פעמיים|לפריט של הצוות/);
+  });
+});
+
+describe('the "Event deleted · Undo" message, when the app is connected to a repository again', () => {
+  it('is taken away with the undo steps: its button cannot touch the schedule that is on screen afterwards', async () => {
+    const { store } = await start();
+    store.actions.deleteEvent(W, 'a');
+    await store.whenIdle();
+    const offer = store.getState().toasts.find((entry) => entry.action);
+    expect(offer).toBeDefined();
+    expect(store.getState().canUndo).toBe(true);
+
+    const outcome = await store.actions.connectRepo({ url: 'https://example.com/team/other.git', branch: null, userName: 'Dana', userEmail: 'dana@example.com' });
+    await store.whenIdle();
+
+    expect(outcome.ok).toBe(true);
+    expect(store.getState().toasts.some((entry) => entry.id === offer?.id)).toBe(false);
+    expect(store.getState().canUndo).toBe(false);
+    // A click that was already on its way changes nothing.
+    const before = store.getState().working;
+    offer?.action?.run();
+    expect(store.getState().working).toBe(before);
+    expect(getWeek(store.getState().working, W).events.map((event) => event.id)).toEqual(['b']);
   });
 });

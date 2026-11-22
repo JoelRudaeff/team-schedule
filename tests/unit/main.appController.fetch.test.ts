@@ -4,6 +4,10 @@
  * writing edits is not held up, a connect and the end of the app still wait for the fetch,
  * and a failure of the fetch still reaches whoever asked for it.
  * (Added after a review found these changes untested and idle() no longer waiting.)
+ *
+ * shutdown() is what the app awaits when its last window has closed: it ends the waiting
+ * check instead of sitting it out. (A second review found that a closed app could otherwise
+ * not be opened again until git gave up on the server.)
  */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -24,11 +28,13 @@ interface Rig {
   /** Lets the pending fetch of the pretend service finish (or fail). */
   finishFetch: (error?: Error) => void;
   connects: number;
+  /** How often the pretend service was told to stop its fetch. */
+  stops: number;
 }
 
 async function createRig(): Promise<Rig> {
   const root = await mkdtemp(join(tmpdir(), 'team-schedule-pr-controller-'));
-  const rig = { root, log: [] as string[], connects: 0, finishFetch: () => undefined } as unknown as Rig;
+  const rig = { root, log: [] as string[], connects: 0, stops: 0, finishFetch: () => undefined } as unknown as Rig;
   let fetching: Promise<void> = Promise.resolve();
 
   const service = (dir: string, url: string, branch: string): RepoHandle => ({
@@ -37,6 +43,12 @@ async function createRig(): Promise<Rig> {
     branch,
     // Like RepoService.idle(): settles when the fetch is over, never rejects.
     idle: () => fetching.then(() => undefined, () => undefined),
+    // Like RepoService.stopFetch(): the fetch that is waiting ends (with an error in its status, not a rejection).
+    stopFetch: () => {
+      rig.stops += 1;
+      rig.log.push('stopFetch');
+      rig.finishFetch();
+    },
     setIdentity: async () => undefined,
     hasSchedule: async () => true,
     fetch: () => {
@@ -131,5 +143,50 @@ describe('a background fetch that waits for the server, seen from the controller
     rig.finishFetch();
     await fetch;
     expect(idleBeforeFetchEnded).toBe(false);
+  });
+
+  it('shutdown(), which is awaited when the last window has closed, ends it instead of waiting', async () => {
+    rig = await createRig();
+    const fetch = rig.controller.fetch({ interactive: false });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(rig.log).toEqual(['fetch started']);
+
+    expect(await settled(rig.controller.shutdown())).toBe(true);
+
+    expect(rig.log).toEqual(['fetch started', 'stopFetch', 'fetch finished']);
+    // Whoever asked for the check still gets an answer.
+    expect(await settled(fetch)).toBe(true);
+  });
+
+  it('shutdown() still waits for everything else: an edit that is being written is finished first', async () => {
+    rig = await createRig();
+    const write = rig.controller.writeWorking({ 'schedule.json': '{}\n' });
+    await rig.controller.shutdown();
+    expect(rig.log).toContain('writeWorking done');
+    expect(rig.stops).toBe(1);
+    await write;
+  });
+});
+
+describe('shutdown() before any repository is connected', () => {
+  it('simply resolves', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'team-schedule-pr-controller-'));
+    try {
+      const unusable = (): never => {
+        throw new Error('not expected in this test');
+      };
+      const desktop = { appVersion: () => '1.0.2', systemLocale: () => 'en-US', documentsDir: () => root } as unknown as Desktop;
+      const layer: GitLayer = {
+        detectGit: async () => ({ found: false, path: null, version: null }),
+        createGitRunner: unusable,
+        connect: unusable,
+        open: unusable,
+      };
+      const controller = new AppController({ store: new LocalStore(join(root, 'userData')), desktop, git: layer });
+      await controller.boot();
+      expect(await settled(controller.shutdown())).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
   });
 });

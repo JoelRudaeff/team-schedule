@@ -188,7 +188,7 @@ Node.js 22.12 or newer and Git are required. With Node installed normally, use p
 npm install            # once; if npm skipped Electron's download: node node_modules\electron\install.js
 npm run dev            # run with hot reload
 npm run typecheck
-npm test               # ~3,550 unit, git-integration and store tests (the integration tests need git)
+npm test               # ~3,560 unit, git-integration and store tests (the integration tests need git)
 npm run build          # production build into out\
 npm run test:e2e       # end-to-end tests: Playwright drives the built app (run the build first)
 npm run dist           # build + installer and portable exe into dist\

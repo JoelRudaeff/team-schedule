@@ -236,8 +236,11 @@ async function start(): Promise<void> {
 
   app.on('second-instance', focusMainWindow);
   app.on('window-all-closed', () => {
-    // Settings and git work that are still in flight finish before the process ends.
-    void controller.idle().finally(() => app.quit());
+    // Settings and git work that are still in flight finish before the process ends — except
+    // a check for updates that is waiting for a server that does not answer: that one is
+    // ended, or the closed app would stay alive (and could not be opened again) for as long
+    // as git keeps waiting.
+    void controller.shutdown().finally(() => app.quit());
   });
 
   mainWindow = await createMainWindow(store);

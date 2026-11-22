@@ -33,6 +33,8 @@
  * ── Time limits ────────────────────────────────────────────────────────────────────────
  * clone 300 s; fetch / push started by the user 180 s (Git's sign-in window may be open);
  * the quiet background fetch 45 s; everything local 30 s.
+ * A check for updates that is still waiting when the app is closed is not sat out: it is
+ * ended on the spot (stopFetch). A save that is under way always runs to its own end.
  */
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -298,6 +300,10 @@ export class RepoService {
   private networkTail: Promise<void> = Promise.resolve();
   private lastFetchAt: number | null = null;
   private fetchError: SyncError | null = null;
+  /** Ends the check for updates that is waiting for the server, if one is (see stopFetch). */
+  private fetchStopper: AbortController | null = null;
+  /** Set by stopFetch(): from then on no further check for updates asks the server. */
+  private closing = false;
 
   /** Use `RepoService.connect` / `RepoService.open`; the constructor does no I/O. */
   constructor(git: GitRunner, dir: string, url: string, branch: string) {
@@ -463,6 +469,21 @@ export class RepoService {
     } while (network !== this.networkTail || local !== this.tail);
   }
 
+  /**
+   * For the moment the app is closed: ends a check for updates — fetch() — that is still
+   * waiting for the server, and lets no further one ask the server. Such a check then ends
+   * like one that ran into its time limit (`fetchError` with code `timeout`). Without this, a
+   * server that does not answer would keep the closed app alive — and impossible to open
+   * again — until git gave up by itself.
+   *
+   * Only the check is ended. A save (publish, createSchedule) that is under way is not
+   * touched: the user asked for it and confirmed it, so it runs to its own end.
+   */
+  stopFetch(): void {
+    this.closing = true;
+    this.fetchStopper?.abort();
+  }
+
   /** Stores user.name / user.email in the repository's local git config. */
   setIdentity(userName: string, userEmail: string): Promise<void> {
     return this.enqueue(async () => {
@@ -513,7 +534,7 @@ export class RepoService {
    */
   fetch(interactive: boolean): Promise<SyncStatus> {
     return this.enqueueNetwork(async () => {
-      await this.fetchRemote(interactive);
+      await this.fetchRemote(interactive, true);
       return this.enqueue(() => this.statusNow());
     });
   }
@@ -847,18 +868,32 @@ export class RepoService {
     };
   }
 
-  /** `git fetch --prune origin`; a failure is remembered in `fetchError`, never thrown. */
-  private async fetchRemote(interactive: boolean): Promise<void> {
+  /**
+   * `git fetch --prune origin`; a failure is remembered in `fetchError`, never thrown.
+   * `stoppable`: this is a check for updates, which stopFetch() may end (the fetch that is
+   * the first step of a save is not).
+   */
+  private async fetchRemote(interactive: boolean, stoppable = false): Promise<void> {
+    if (stoppable && this.closing) {
+      // The app is closing and nobody is left to hear the answer: the server is not even asked.
+      this.fetchError = classifyGitFailure({ args: ['fetch'], stdout: '', stderr: '', exitCode: null, timedOut: true });
+      return;
+    }
+    const stopper = stoppable ? new AbortController() : null;
+    this.fetchStopper = stopper;
     try {
       await this.run(['fetch', '--prune', 'origin'], {
         timeoutMs: interactive ? INTERACTIVE_NETWORK_TIMEOUT_MS : BACKGROUND_NETWORK_TIMEOUT_MS,
         interactive,
+        signal: stopper?.signal,
       });
       this.lastFetchAt = Date.now();
       this.fetchError = null;
     } catch (error) {
       if (!(error instanceof GitError)) throw error;
       this.fetchError = error.toSyncError();
+    } finally {
+      if (this.fetchStopper === stopper) this.fetchStopper = null;
     }
   }
 

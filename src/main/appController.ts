@@ -58,6 +58,7 @@ export type RepoHandle = Pick<
   | 'url'
   | 'branch'
   | 'idle'
+  | 'stopFetch'
   | 'setIdentity'
   | 'hasSchedule'
   | 'fetch'
@@ -190,6 +191,16 @@ export class AppController implements ApiHandlers {
     await this.service?.idle();
     await this.repoQueue.idle();
     await this.store.idle();
+  }
+
+  /**
+   * For the moment the last window is closed: a check for updates that is still waiting for
+   * the server is ended (nobody is left to hear its answer), everything else is allowed to
+   * finish. Resolves when nothing is in flight any more (never rejects).
+   */
+  async shutdown(): Promise<void> {
+    this.service?.stopFetch();
+    await this.idle();
   }
 
   // ── start-up and local settings ──

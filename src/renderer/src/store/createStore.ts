@@ -1005,7 +1005,8 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
 
     if (status.behind === 0) {
       if (askAgain) {
-        set({ busy: null, dialog: { type: 'publish' } });
+        // The same save, asked again: the note that was typed for it is still in the box.
+        set({ busy: null, dialog: { type: 'publish', note } });
         return;
       }
       const result = await api.publish({

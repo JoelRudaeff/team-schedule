@@ -42,7 +42,7 @@ function renderDialog(dialog: Exclude<DialogState, { type: 'close-guard' }> | Di
     case 'settings':
       return <SettingsDialog dialog={dialog} />;
     case 'publish':
-      return <PublishDialog />;
+      return <PublishDialog dialog={dialog} />;
     case 'merge':
       return <MergeDialog key={dialog.session.remoteSha} dialog={dialog} />;
     case 'aside':

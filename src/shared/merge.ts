@@ -835,13 +835,17 @@ function entitiesUsedBy(configs: readonly Dataset['config'][], event: ScheduleEv
 }
 
 /**
- * True when `changed` is `base` with nothing but the reference to the entry taken out of that
- * field — which is what deleting the entry does to an event. An event that was moved to
- * somebody else on purpose (Dana → Uri) is not that.
+ * True when the deleting side took nothing out of that field of the event but entries it
+ * deleted altogether — which is what deleting entries does to an event. It may have deleted
+ * several that share the lesson (Dana AND Vered), so the comparison is with the base event
+ * minus EVERY entry that side no longer has (`deleter` is its settings), not minus the one
+ * entry in question. An event that was moved to somebody else on purpose (Dana → Uri) is
+ * not that.
  */
-function onlyStripped(base: ScheduleEvent, changed: ScheduleEvent, kind: EntityKind, id: string): boolean {
+function onlyStripped(base: ScheduleEvent, changed: ScheduleEvent, kind: EntityKind, id: string, deleter: Dataset['config']): boolean {
   if (!eventReferences(base, kind, id)) return false;
-  return deepEqual(referencedIds(changed, kind), referencedIds(stripReference(base, kind, id), kind));
+  const left = referencedIds(base, kind).filter((ref) => findEntity(deleter, kind, ref) !== undefined);
+  return deepEqual(referencedIds(changed, kind), left);
 }
 
 /**
@@ -855,8 +859,8 @@ function onlyStripped(base: ScheduleEvent, changed: ScheduleEvent, kind: EntityK
  *  1. when one side deleted a list entry that the other side changed and the entry stays in
  *     the result, the events keep their references to it. Deleting an entry also takes it out
  *     of every event, and those removals belong to the deletion that did not happen. Only
- *     they are taken back: an event from which the deleting side removed exactly that
- *     reference (and nothing else in that field) and in which the keeping side still has it.
+ *     they are taken back: an event from which the deleting side removed nothing in that
+ *     field but entries it deleted, and in which the keeping side still has the entry.
  *     The same goes for my version of such an event when it is kept aside;
  *  2. every week's events are sorted and empty weeks are dropped;
  *  3. references are repaired: when an event in the result points to a subject / location /
@@ -902,7 +906,8 @@ export function applyMerge(input: ApplyMergeInput): AppliedMerge {
       const deleter = deletedByMe ? item.mine : item.theirs;
       const keeper = deletedByMe ? item.theirs : item.mine;
       if (!isScheduleEvent(item.base) || !isScheduleEvent(deleter) || !isScheduleEvent(keeper)) continue;
-      if (!onlyStripped(item.base, deleter, kind, id) || !eventReferences(keeper, kind, id)) continue;
+      const deleterConfig = (deletedByMe ? mine : theirs).config;
+      if (!onlyStripped(item.base, deleter, kind, id, deleterConfig) || !eventReferences(keeper, kind, id)) continue;
       const current = getItemValue(dataset, item);
       if (isScheduleEvent(current)) dataset = setItemValue(dataset, item, addReference(current, kind, id));
       // My version of the event, kept aside, lost the reference through my deletion as well.

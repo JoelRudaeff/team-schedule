@@ -202,9 +202,28 @@ describe('one over-long name used by several lessons of a file', () => {
     expect([twice.shortened, other.shortened]).toEqual([0, 0]);
   });
 
-  it('a name that is only blanks after the cut cannot become an entry', () => {
+  it('a name that is only blanks cannot become an entry: the lesson simply has no location', () => {
     const result = load(template([templateEvent({ location: { id: 'loc1234567', name: '   ' } })]));
     expect(result.dataset.config.locations).toEqual([]);
     expect(getWeek(result.dataset, TARGET).events[0].locationId).toBeNull();
+    expect(result.shortened).toBe(0);
+  });
+
+  it('a name whose cut ends in a blank is stored without that blank, and is still found again', () => {
+    // 79 letters, a blank exactly at the limit, then more text: the cut ends in the blank.
+    const SPACED = `${'x'.repeat(TEXT_LIMITS.entityName - 1)} tail of the name`;
+    const events = [0, 1, 2].map((day) => templateEvent({ day: day as TemplateEvent['day'], teachers: [{ id: '', name: SPACED }] }));
+    const first = load(template(events));
+    const teachers = first.dataset.config.teachers;
+
+    expect(teachers).toHaveLength(1);
+    expect(teachers[0].name).toBe('x'.repeat(TEXT_LIMITS.entityName - 1));
+    expect(first.created.teachers).toBe(1);
+    expect(first.shortened).toBe(1);
+    for (const event of getWeek(first.dataset, TARGET).events) expect(event.teacherIds).toEqual([teachers[0].id]);
+
+    const again = load(template(events), first.dataset);
+    expect(again.dataset.config.teachers).toHaveLength(1);
+    expect([again.created.teachers, again.shortened]).toEqual([0, 0]);
   });
 });

@@ -467,3 +467,114 @@ describe('the same name twice, when one side renamed an entry both sides have', 
     expect(second.applied.notes).toEqual([]);
   });
 });
+
+// The cases below were found by the second review of pull request #1: the rule above looked
+// at ONE deleted entry at a time, so it failed as soon as the deleting side had deleted two.
+
+describe('the deleting side deleted several entries that share a lesson, and one of them stays', () => {
+  /** Dana (T) and Vered (V) teach five lessons together; Uri (U) is in the list too. */
+  function baseTwoTeachers(): Dataset {
+    let dataset = emptyDataset();
+    dataset = addEntity(dataset, 'teacher', { id: 'T', name: 'Dana' });
+    dataset = addEntity(dataset, 'teacher', { id: 'U', name: 'Uri' });
+    dataset = addEntity(dataset, 'teacher', { id: 'V', name: 'Vered' });
+    for (let i = 0; i < 5; i++) dataset = upsertEvent(dataset, WEEK, ev(`e${i}`, i, { teacherIds: ['T', 'V'] }));
+    return dataset;
+  }
+  const deleteBoth = (dataset: Dataset): Dataset => removeEntity(removeEntity(dataset, 'teacher', 'T'), 'teacher', 'V');
+
+  it('I delete Dana and Vered, the team renames Dana and its version is kept: Dana keeps her five lessons, Vered is gone', () => {
+    const base = baseTwoTeachers();
+    const mine = deleteBoth(base);
+    const theirs = updateEntity(base, 'teacher', 'T', { name: 'Dana Levi' });
+    const { result, applied } = merge(base, mine, theirs, 'theirs');
+
+    expect(result.items.filter((item) => item.status === 'conflict').map((item) => item.key)).toEqual(['teacher:T']);
+    expect(findEntity(applied.dataset.config, 'teacher', 'T')).toEqual({ id: 'T', name: 'Dana Levi' });
+    expect(countEntityUsage(applied.dataset, 'teacher', 'T')).toBe(5);
+    // My other deletion did happen: Vered is off the list and off every lesson.
+    expect(findEntity(applied.dataset.config, 'teacher', 'V')).toBeUndefined();
+    expect(findEvent(applied.dataset, WEEK, 'e0')?.teacherIds).toEqual(['T']);
+    expect(applied.notes).toEqual([]);
+    expect(dangling(applied.dataset)).toEqual([]);
+  });
+
+  it('I delete both, the team renames both, both are kept aside: both keep their lessons and nothing is left for me to publish', () => {
+    const base = baseTwoTeachers();
+    const mine = deleteBoth(base);
+    const theirs = updateEntity(updateEntity(base, 'teacher', 'T', { name: 'Dana Levi' }), 'teacher', 'V', { name: 'Vered Cohen' });
+    const { applied } = merge(base, mine, theirs, 'aside');
+
+    expect(countEntityUsage(applied.dataset, 'teacher', 'T')).toBe(5);
+    expect(countEntityUsage(applied.dataset, 'teacher', 'V')).toBe(5);
+    expect(applied.aside.map((item) => item.key)).toEqual(['teacher:T', 'teacher:V']);
+    expect(applied.dataset).toEqual(theirs);
+  });
+
+  it('the mirror: the team deletes both, I rename Dana and my version wins', () => {
+    const base = baseTwoTeachers();
+    const theirs = deleteBoth(base);
+    const mine = updateEntity(base, 'teacher', 'T', { name: 'Dana Levi' });
+    const { applied } = merge(base, mine, theirs, 'mine');
+
+    expect(findEntity(applied.dataset.config, 'teacher', 'T')).toEqual({ id: 'T', name: 'Dana Levi' });
+    expect(countEntityUsage(applied.dataset, 'teacher', 'T')).toBe(5);
+    expect(findEvent(applied.dataset, WEEK, 'e0')?.teacherIds).toEqual(['T']);
+    expect(dangling(applied.dataset)).toEqual([]);
+  });
+
+  it('the same for classes', () => {
+    let base = emptyDataset();
+    base = addEntity(base, 'class', { id: 'A', name: 'Class A' });
+    base = addEntity(base, 'class', { id: 'B', name: 'Class B' });
+    for (let i = 0; i < 3; i++) base = upsertEvent(base, WEEK, ev(`e${i}`, i, { classIds: ['A', 'B'] }));
+    const mine = removeEntity(removeEntity(base, 'class', 'A'), 'class', 'B');
+    const theirs = updateEntity(base, 'class', 'A', { name: 'Class A1' });
+    const { applied } = merge(base, mine, theirs, 'theirs');
+
+    expect(countEntityUsage(applied.dataset, 'class', 'A')).toBe(3);
+    expect(findEvent(applied.dataset, WEEK, 'e0')?.classIds).toEqual(['A']);
+  });
+
+  it('my version of a lesson that is kept aside comes back with the teacher who stays', () => {
+    const base = baseTwoTeachers();
+    // I delete both and retitle e0; the team renames Dana and retitles e0 too.
+    const mine = upsertEvent(deleteBoth(base), WEEK, ev('e0', 0, { teacherIds: [], title: 'My title' }));
+    const theirs = upsertEvent(updateEntity(base, 'teacher', 'T', { name: 'Dana Levi' }), WEEK, ev('e0', 0, { teacherIds: ['T', 'V'], title: 'Their title' }));
+    const { applied } = merge(base, mine, theirs, 'aside');
+    const item = applied.aside.find((kept) => kept.key === `event:${WEEK}:e0`);
+    if (!item) throw new Error('the event was not kept aside');
+
+    expect(item.mine).toMatchObject({ title: 'My title', teacherIds: ['T'] });
+    const after = applyAsideItem(applied.dataset, item);
+    expect(findEvent(after, WEEK, 'e0')).toMatchObject({ title: 'My title', teacherIds: ['T'] });
+    expect(dangling(after)).toEqual([]);
+  });
+
+  it('a lesson from which the deleting side ALSO took somebody who still exists was changed on purpose: it is left as that side made it', () => {
+    let base = baseTwoTeachers();
+    base = upsertEvent(base, WEEK, ev('e0', 0, { teacherIds: ['T', 'U', 'V'] }));
+    // I take Uri off e0 (he stays in the list), then delete Dana and Vered.
+    const mine = deleteBoth(upsertEvent(base, WEEK, ev('e0', 0, { teacherIds: ['T', 'V'] })));
+    const theirs = updateEntity(base, 'teacher', 'T', { name: 'Dana Levi' });
+    const { applied } = merge(base, mine, theirs, 'theirs');
+
+    expect(findEvent(mine, WEEK, 'e0')?.teacherIds).toEqual([]);
+    // e0 was edited by hand in that field, so nothing is guessed there …
+    expect(findEvent(applied.dataset, WEEK, 'e0')?.teacherIds).toEqual([]);
+    // … while the four lessons that lost Dana only through the deletion have her back.
+    expect(countEntityUsage(applied.dataset, 'teacher', 'T')).toBe(4);
+    expect(dangling(applied.dataset)).toEqual([]);
+  });
+
+  it('a lesson on which a deleted and an untouched teacher stood together keeps the untouched one and gets the kept one back', () => {
+    let base = baseTwoTeachers();
+    base = upsertEvent(base, WEEK, ev('e0', 0, { teacherIds: ['T', 'U', 'V'] }));
+    const mine = deleteBoth(base);
+    const theirs = updateEntity(base, 'teacher', 'T', { name: 'Dana Levi' });
+    const { applied } = merge(base, mine, theirs, 'theirs');
+
+    expect(findEvent(applied.dataset, WEEK, 'e0')?.teacherIds).toEqual(['T', 'U']);
+    expect(countEntityUsage(applied.dataset, 'teacher', 'T')).toBe(5);
+  });
+});

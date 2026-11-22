@@ -12,6 +12,7 @@ import type { FileMap, ScheduleEvent, WeekData } from '@shared/types';
 import { GitError, detectGit, type GitRunner } from '../../src/main/git/gitRunner';
 import { RepoService, fileBytesOf, fileTextOf } from '../../src/main/git/repoService';
 import { CONFIG_TEXT, DANA, WEEK, WEEK_FILE, YOSSI, createSandbox, eventLine, weekText, type Sandbox } from './helpers';
+import { startSilentServer, type SilentServer } from './silentServer';
 
 const E1 = eventLine('e1', 0, '09:00', '10:30', 'מבוא');
 const E2 = eventLine('e2', 1, '09:00', '10:30', 'שני');
@@ -521,6 +522,99 @@ describe('a check for updates that waits for a server that does not answer', () 
     expect(fetches).toBe(2);
     expect(overlapped).toBe(false);
     await service.idle();
+  });
+});
+
+describe('the app is closed while a check for updates waits for a server that does not answer', () => {
+  let box: Sandbox;
+  let server: SilentServer;
+  /** Dana's clone, with its `origin` pointed at the server that never answers. */
+  let service: RepoService;
+  let dir = '';
+
+  beforeAll(async () => {
+    box = await createSandbox();
+    server = await startSilentServer();
+    const dana = (await box.connect('dana', DANA)).service;
+    ok(await dana.createSchedule(FIRST, 'Create schedule'));
+    dir = dana.dir;
+    await box.raw(dir, 'remote', 'set-url', 'origin', server.url);
+    service = (await RepoService.open(box.git, dir, server.url, dana.branch))!;
+  });
+  afterAll(async () => {
+    await server.close();
+    await box.cleanup();
+  });
+
+  it('stopFetch() ends the waiting check at once: it comes back like one that ran into its time limit', async () => {
+    const before = server.connections();
+    const started = Date.now();
+    const check = service.fetch(false);
+    await server.waitForConnections(before + 1);
+    // Still waiting: the quiet check would go on for 45 seconds.
+    expect(await Promise.race([check.then(() => 'answered'), new Promise((resolve) => setTimeout(() => resolve('waiting'), 300))])).toBe('waiting');
+
+    service.stopFetch();
+    const status = await check;
+
+    expect(status.fetchError?.code).toBe('timeout');
+    expect(Date.now() - started).toBeLessThan(30_000);
+    // Everything of the service is over, which is what the closing app waits for.
+    await service.idle();
+    // The schedule itself was not touched.
+    expect(status.headSha).not.toBeNull();
+    expect(await readFile(join(dir, WEEK_FILE), 'utf8')).toBe(FIRST[WEEK_FILE]);
+  });
+
+  it('after that, a further check does not ask the server at all', async () => {
+    const before = server.connections();
+    const started = Date.now();
+    const status = await service.fetch(false);
+
+    expect(status.fetchError?.code).toBe('timeout');
+    expect(server.connections()).toBe(before);
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it('a check that was only queued behind the waiting one is not started either', async () => {
+    const fresh = (await RepoService.open(box.git, dir, server.url, service.branch))!;
+    const before = server.connections();
+    const first = fresh.fetch(false);
+    const second = fresh.fetch(true);
+    await server.waitForConnections(before + 1);
+
+    fresh.stopFetch();
+
+    expect((await first).fetchError?.code).toBe('timeout');
+    expect((await second).fetchError?.code).toBe('timeout');
+    expect(server.connections()).toBe(before + 1);
+    await fresh.idle();
+  });
+});
+
+describe('the app is closed: what stopFetch() must leave alone', () => {
+  let box: Sandbox;
+  afterAll(() => box.cleanup());
+
+  it('a save still goes out: the fetch that is its first step is not a check for updates', async () => {
+    box = await createSandbox();
+    const dana = (await box.connect('dana', DANA)).service;
+    ok(await dana.createSchedule(FIRST, 'Create schedule'));
+
+    dana.stopFetch();
+    const files = { ...FIRST, [WEEK_FILE]: weekText('saved while closing', [E1]) };
+    const result = await dana.publish(files, 'Save', (await dana.status()).remoteSha);
+
+    ok(result);
+    expect(result.commitSha).not.toBeNull();
+    expect((await box.raw(box.remote, 'show', `${dana.branch}:${WEEK_FILE}`)).stdout).toContain('saved while closing');
+  });
+
+  it('local work goes on as before: edits are written and read', async () => {
+    const dana = (await RepoService.open(box.git, box.dirOf('dana'), box.remote, 'main')) ?? (await box.connect('dana', DANA)).service;
+    dana.stopFetch();
+    await dana.writeWorking({ ...FIRST, [WEEK_FILE]: weekText('edited while closing', [E1]) });
+    expect((await dana.loadSnapshot()).workingFiles[WEEK_FILE]).toContain('edited while closing');
   });
 });
 

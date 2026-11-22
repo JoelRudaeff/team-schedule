@@ -121,8 +121,8 @@ export type DialogState =
   /** Create (eventId null) or edit an event. `initial` pre-fills a new event (day / start / end from the clicked slot). */
   | { type: 'event'; weekStart: IsoDate; eventId: string | null; initial?: Partial<ScheduleEvent> }
   | { type: 'settings'; tab?: SettingsTab }
-  /** Confirmation before saving to the team repository. */
-  | { type: 'publish' }
+  /** Confirmation before saving to the team repository. `note`: what the note box starts with (the question is put again). */
+  | { type: 'publish'; note?: string }
   /** Graphic merge overview. */
   | { type: 'merge'; session: MergeSession }
   /** List of versions kept aside. */
