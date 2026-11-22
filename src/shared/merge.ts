@@ -780,8 +780,10 @@ export type MergeNote =
   | { code: 'time-grid-reset' }
   /** The combined course dates were impossible (start after end); the team's dates were used. */
   | { code: 'course-dates-reset' }
-  /** I added an entry under a name the team's list already has; mine was folded into theirs (`id`). */
-  | { code: 'entity-merged'; kind: EntityKind; id: string; name: string };
+  /** Two entries of the same name were folded into one (`id` is the entry that stays). */
+  | { code: 'entity-merged'; kind: EntityKind; id: string; name: string }
+  /** Two entries that both sides have ended up with the same name; nothing was folded. */
+  | { code: 'entity-duplicate'; kind: EntityKind; name: string };
 
 export interface AppliedMerge {
   dataset: Dataset;
@@ -816,38 +818,30 @@ function sortAllWeeks(dataset: Dataset): Dataset {
   return changed ? { ...dataset, weeks: Object.fromEntries(entries) } : dataset;
 }
 
-/** The list entries of `config` that the event points to (entries that do not exist are left out). */
-function entitiesUsedBy(config: Dataset['config'], event: ScheduleEvent): AsideEntity[] {
+/** The list entries the event points to, each from the first of `configs` that has it. */
+function entitiesUsedBy(configs: readonly Dataset['config'][], event: ScheduleEvent): AsideEntity[] {
   const used: AsideEntity[] = [];
   for (const kind of ENTITY_KINDS) {
     for (const id of referencedIds(event, kind)) {
-      const value = findEntity(config, kind, id);
-      if (value) used.push({ kind, value });
+      for (const config of configs) {
+        const value = findEntity(config, kind, id);
+        if (!value) continue;
+        used.push({ kind, value });
+        break;
+      }
     }
   }
   return used;
 }
 
-/** An aside item for a conflict of mine, with the list entries an event of mine needs to come back whole. */
-function asideItemFor(item: MergeItem, mine: Dataset, now: string): AsideItem {
-  const aside: AsideItem = { ...refOf(item), mine: item.mine, theirs: item.theirs, createdAt: now };
-  if (isScheduleEvent(item.mine)) {
-    const entities = entitiesUsedBy(mine.config, item.mine);
-    if (entities.length > 0) aside.entities = entities;
-  }
-  return aside;
-}
-
 /**
- * Gives every event of `dataset` back the reference to the entry that the same event has
- * in `keeper`. Used when one side deleted a list entry (which also took it out of that
- * side's events) but the entry stays: the events must not lose it through the back door.
+ * True when `changed` is `base` with nothing but the reference to the entry taken out of that
+ * field — which is what deleting the entry does to an event. An event that was moved to
+ * somebody else on purpose (Dana → Uri) is not that.
  */
-function keepReferences(dataset: Dataset, keeper: Dataset, kind: EntityKind, id: string): Dataset {
-  return mapEvents(dataset, (event, weekStart) => {
-    const kept = weekOf(keeper, weekStart).events.find((other) => other.id === event.id);
-    return kept && eventReferences(kept, kind, id) ? addReference(event, kind, id) : event;
-  });
+function onlyStripped(base: ScheduleEvent, changed: ScheduleEvent, kind: EntityKind, id: string): boolean {
+  if (!eventReferences(base, kind, id)) return false;
+  return deepEqual(referencedIds(changed, kind), referencedIds(stripReference(base, kind, id), kind));
 }
 
 /**
@@ -859,19 +853,26 @@ function keepReferences(dataset: Dataset, keeper: Dataset, kind: EntityKind, id:
  * List order: the team's order, then entries only I added (in my order) at the end.
  * Afterwards:
  *  1. when one side deleted a list entry that the other side changed and the entry stays in
- *     the result, the events keep their references to it: deleting an entry also takes it
- *     out of every event, and those removals belong to the deletion that did not happen;
+ *     the result, the events keep their references to it. Deleting an entry also takes it out
+ *     of every event, and those removals belong to the deletion that did not happen. Only
+ *     they are taken back: an event from which the deleting side removed exactly that
+ *     reference (and nothing else in that field) and in which the keeping side still has it.
+ *     The same goes for my version of such an event when it is kept aside;
  *  2. every week's events are sorted and empty weeks are dropped;
  *  3. references are repaired: when an event in the result points to a subject / location /
  *     teacher / class that is missing from the result but exists in `mine` or `theirs`,
  *     that entry is appended back to its list (the team's version when both have it) and
  *     an `entity-restored` note is added (once per entry);
- *  4. an entry that only I have and whose name the team's list already uses (two people added
- *     the same room) is folded into the team's entry: my events point to theirs, mine is
- *     dropped, and an `entity-merged` note is added;
+ *  4. a name that this merge would leave in a list twice is folded into one entry: an entry
+ *     that only one side has is folded into the entry both sides have, else mine into the
+ *     team's (the events of the folded entry point to the one that stays), with an
+ *     `entity-merged` note. Two entries that both sides know are different things that merely
+ *     got the same name: nothing is decided there, an `entity-duplicate` note says so. A
+ *     name the team's own list already has twice is not this merge's business;
  *  5. when the resulting timeGrid has dayStart >= dayEnd, the team's whole timeGrid is
  *     used instead and a `time-grid-reset` note is added; likewise the team's course dates
  *     with a `course-dates-reset` note when the course would end before it starts.
+ * Every event that is kept aside remembers the list entries it points to (`AsideItem.entities`).
  * Entries in `resolutions` for keys that are not conflicts are ignored. `result` must be
  * mergeDatasets(base, mine, theirs) for these same `mine` and `theirs`.
  */
@@ -886,15 +887,31 @@ export function applyMerge(input: ApplyMergeInput): AppliedMerge {
     }
     const resolution = resolutions[item.key] ?? defaultResolution;
     if (resolution === 'mine') dataset = setItemValue(dataset, item, item.mine);
-    else if (resolution === 'aside') aside.push(asideItemFor(item, mine, now));
+    else if (resolution === 'aside') aside.push({ ...refOf(item), mine: item.mine, theirs: item.theirs, createdAt: now });
   }
 
-  for (const item of result.items) {
-    if (item.status !== 'conflict' || !isOneOf(ENTITY_KINDS, item.kind) || item.id === undefined) continue;
-    const deletedByMe = item.mine === undefined && item.theirs !== undefined;
-    const deletedByThem = item.theirs === undefined && item.mine !== undefined;
-    if ((!deletedByMe && !deletedByThem) || !findEntity(dataset.config, item.kind, item.id)) continue;
-    dataset = keepReferences(dataset, deletedByMe ? theirs : mine, item.kind, item.id);
+  for (const entry of result.items) {
+    if (entry.status !== 'conflict' || !isOneOf(ENTITY_KINDS, entry.kind) || entry.id === undefined) continue;
+    const deletedByMe = entry.mine === undefined && entry.theirs !== undefined;
+    const deletedByThem = entry.theirs === undefined && entry.mine !== undefined;
+    if ((!deletedByMe && !deletedByThem) || !findEntity(dataset.config, entry.kind, entry.id)) continue;
+    const kind = entry.kind;
+    const id = entry.id;
+    for (const item of result.items) {
+      if (item.kind !== 'event') continue;
+      const deleter = deletedByMe ? item.mine : item.theirs;
+      const keeper = deletedByMe ? item.theirs : item.mine;
+      if (!isScheduleEvent(item.base) || !isScheduleEvent(deleter) || !isScheduleEvent(keeper)) continue;
+      if (!onlyStripped(item.base, deleter, kind, id) || !eventReferences(keeper, kind, id)) continue;
+      const current = getItemValue(dataset, item);
+      if (isScheduleEvent(current)) dataset = setItemValue(dataset, item, addReference(current, kind, id));
+      // My version of the event, kept aside, lost the reference through my deletion as well.
+      if (deletedByMe) {
+        aside = aside.map((kept) =>
+          kept.key === item.key && isScheduleEvent(kept.mine) ? { ...kept, mine: addReference(kept.mine, kind, id) } : kept,
+        );
+      }
+    }
   }
   dataset = pruneEmptyWeeks(sortAllWeeks(dataset));
 
@@ -909,28 +926,40 @@ export function applyMerge(input: ApplyMergeInput): AppliedMerge {
   }
 
   for (const kind of ENTITY_KINDS) {
-    const teamIds = new Set(entityList(theirs.config, kind).map((entry) => entry.id));
-    const teamEntryByName = new Map<string, NamedItem>();
+    const teamList = entityList(theirs.config, kind);
+    const teamIds = new Set(teamList.map((entry) => entry.id));
+    const myIds = new Set(entityList(mine.config, kind).map((entry) => entry.id));
+    const teamNames = teamList.map((entry) => nameKey(entry.name));
+    const groups = new Map<string, NamedItem[]>();
     for (const entry of entityList(dataset.config, kind)) {
       const key = nameKey(entry.name);
-      if (teamIds.has(entry.id) && key !== '' && !teamEntryByName.has(key)) teamEntryByName.set(key, entry);
+      if (key === '') continue;
+      groups.set(key, [...(groups.get(key) ?? []), entry]);
     }
-    for (const entry of entityList(dataset.config, kind)) {
-      const twin = teamIds.has(entry.id) ? undefined : teamEntryByName.get(nameKey(entry.name));
-      if (!twin) continue;
-      const from = entry.id;
-      dataset = mapEvents(setItemValue(dataset, entityRef(kind, from), undefined), (event) =>
-        replaceReference(event, kind, from, twin.id),
-      );
-      // A version of mine that is kept aside must not bring the folded entry back later.
-      aside = aside.map((kept) => {
-        if (!isScheduleEvent(kept.mine)) return kept;
-        const event = replaceReference(kept.mine, kind, from, twin.id);
-        if (event === kept.mine) return kept;
-        const entities = kept.entities?.map((used) => (used.kind === kind && used.value.id === from ? { kind, value: twin } : used));
-        return { ...kept, mine: event, ...(entities ? { entities } : {}) };
-      });
-      notes.push({ code: 'entity-merged', kind, id: twin.id, name: twin.name });
+    for (const [key, group] of groups) {
+      // A name the team's own list already holds twice was not made double by this merge.
+      if (group.length < 2 || teamNames.filter((name) => name === key).length > 1) continue;
+      const shared = group.filter((entry) => teamIds.has(entry.id) && myIds.has(entry.id));
+      const oneSided = [
+        ...group.filter((entry) => teamIds.has(entry.id) && !myIds.has(entry.id)),
+        ...group.filter((entry) => !teamIds.has(entry.id)),
+      ];
+      const survivor = shared[0] ?? oneSided[0];
+      for (const entry of oneSided) {
+        if (entry === survivor) continue;
+        const from = entry.id;
+        dataset = mapEvents(setItemValue(dataset, entityRef(kind, from), undefined), (event) =>
+          replaceReference(event, kind, from, survivor.id),
+        );
+        // A version of mine that is kept aside must not bring the folded entry back later.
+        aside = aside.map((kept) => {
+          if (!isScheduleEvent(kept.mine)) return kept;
+          const event = replaceReference(kept.mine, kind, from, survivor.id);
+          return event === kept.mine ? kept : { ...kept, mine: event };
+        });
+        notes.push({ code: 'entity-merged', kind, id: survivor.id, name: survivor.name });
+      }
+      if (shared.length > 1) notes.push({ code: 'entity-duplicate', kind, name: shared[0].name });
     }
   }
 
@@ -943,6 +972,13 @@ export function applyMerge(input: ApplyMergeInput): AppliedMerge {
     dataset = { ...dataset, config: { ...dataset.config, course: { ...dataset.config.course, startDate, endDate } } };
     notes.push({ code: 'course-dates-reset' });
   }
+
+  // Last, when every event has its final references: what a kept-aside event needs to come back whole.
+  aside = aside.map((kept) => {
+    if (!isScheduleEvent(kept.mine)) return kept;
+    const entities = entitiesUsedBy([dataset.config, mine.config], kept.mine);
+    return entities.length > 0 ? { ...kept, entities } : kept;
+  });
   return { dataset, aside, notes };
 }
 
@@ -958,7 +994,11 @@ function eventFitFor(dataset: Dataset, item: AsideItem, mine: ScheduleEvent): { 
   for (const kind of ENTITY_KINDS) {
     for (const id of referencedIds(mine, kind)) {
       if (findEntity(next.config, kind, id)) continue;
-      const stored = item.entities?.find((used) => used.kind === kind && isEntityValue(kind, used.value) && used.value.id === id);
+      // The aside list is read from a file: whatever in it is not a usable entry is simply not there.
+      const kept: readonly unknown[] = Array.isArray(item.entities) ? item.entities : [];
+      const stored = kept.find(
+        (used): used is AsideEntity => isRecord(used) && used.kind === kind && isEntityValue(kind, used.value) && used.value.id === id,
+      );
       const twin = stored ? findEntityByName(next.config, kind, stored.value.name) : undefined;
       if (twin) {
         event = replaceReference(event, kind, id, twin.id);

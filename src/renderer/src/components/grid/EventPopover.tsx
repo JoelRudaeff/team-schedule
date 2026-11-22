@@ -75,6 +75,8 @@ export function EventPopover({ anchor, weekStart, event, weekEvents, clashes, re
         onKeyDown={(e) => {
           if (e.key !== 'Delete' || readOnly) return;
           e.preventDefault();
+          // One press, one event: a key that is held down does not go on deleting.
+          if (e.repeat) return;
           remove();
         }}
       >

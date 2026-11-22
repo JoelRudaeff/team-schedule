@@ -68,6 +68,8 @@ export const store = {
   noteCourseDates:
     'Your course dates and the team\'s did not fit together (the course would end before it starts). The team\'s dates were kept.',
   noteMerged: '{kind} "{name}" was added twice, by you and by a teammate. Your events now use the team\'s entry.',
+  noteDuplicate:
+    '{kind} "{name}" is now in the list twice: you and the team each gave that name to a different entry. Rename one of them in Settings.',
   mergeOutdated: 'The schedule changed after this overview was drawn, so it was built again. Please decide once more.',
 
   // publish

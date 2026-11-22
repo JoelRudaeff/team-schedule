@@ -103,10 +103,14 @@ test('Escape on a changed event asks before throwing it away; an untouched one j
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('event-discard-ask')).toBeVisible();
   await expect(page.getByTestId('event-keep-editing')).toBeFocused();
-  // A second Escape is not "yes, discard": it goes back to editing.
+  // A second Escape is not "yes, discard": it goes back to editing, with the keyboard
+  // in the field it came from, so typing simply continues.
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('event-discard-ask')).toBeHidden();
   await expect(page.getByTestId('event-title')).toHaveValue('Half written');
+  await expect(page.getByTestId('event-title')).toBeFocused();
+  await page.keyboard.type(' and on');
+  await expect(page.getByTestId('event-title')).toHaveValue('Half written and on');
 
   await page.keyboard.press('Escape');
   await page.getByTestId('event-discard').click();
@@ -182,6 +186,31 @@ test('the Delete key keeps the keyboard in the week, and "Undo" brings back that
   await expect(card('Something else')).toBeVisible();
 });
 
+test('a Delete key that is held down deletes one event, not the whole week', async () => {
+  const before = await page.locator('.wg-event').count();
+  expect(before).toBeGreaterThan(2);
+  await card('Something else').focus();
+  // The second and third "down" are what a held key sends: repeats.
+  await page.keyboard.down('Delete');
+  await page.keyboard.down('Delete');
+  await page.keyboard.down('Delete');
+  await page.keyboard.up('Delete');
+  await expect(page.locator('.wg-event')).toHaveCount(before - 1);
+  await expect(card('Something else')).toHaveCount(0);
+  // The same from the details of an event, which hold the keyboard after a click.
+  await card('Double saved').click();
+  await expect(page.getByTestId('event-popover')).toBeVisible();
+  await page.keyboard.down('Delete');
+  await page.keyboard.down('Delete');
+  await page.keyboard.up('Delete');
+  await expect(page.locator('.wg-event')).toHaveCount(before - 2);
+  // Both come back with two Undos.
+  await page.keyboard.press('Escape');
+  await page.locator('body').press('Control+z');
+  await page.locator('body').press('Control+z');
+  await expect(page.locator('.wg-event')).toHaveCount(before);
+});
+
 test('the week-number box keeps what was typed and says why it leads nowhere', async () => {
   const box = page.getByTestId('week-number-input');
   const label = await page.getByTestId('week-label').textContent();
@@ -196,6 +225,19 @@ test('the week-number box keeps what was typed and says why it leads nowhere', a
     await box.press('Control+a');
     await box.press('Delete');
   }
+
+  // Week numbers can be typed one after another: after a jump the box is empty and still has the keyboard.
+  await box.click();
+  await box.pressSequentially('10');
+  await box.press('Enter');
+  await expect(page.getByTestId('week-label')).toContainText('Week 10');
+  await expect(box).toHaveValue('');
+  await expect(box).toBeFocused();
+  await page.keyboard.type('11');
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('week-label')).toContainText('Week 11');
+  await page.getByTestId('week-today').click();
+  expect(await page.getByTestId('week-label').textContent()).toBe(label);
 });
 
 test('a mistyped branch is refused with the branches that exist; the right name connects', async () => {

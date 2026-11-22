@@ -51,7 +51,7 @@ import type {
 import { deepEqual } from '@shared/model';
 import { isDataPath, weekPath } from '@shared/paths';
 import { RAW_BYTES_PREFIX, parseWeek } from '@shared/serialize';
-import { CONFIG_PATH, WEEKS_DIR, type FileMap, type IsoDate, type WeekData } from '@shared/types';
+import { CONFIG_PATH, WEEKS_DIR, type FileMap, type IsoDate, type ScheduleEvent, type WeekData } from '@shared/types';
 import { GitError, classifyGitFailure, type GitRunOptions, type GitResult, type GitRunner } from './gitRunner';
 
 const CLONE_TIMEOUT_MS = 300_000;
@@ -73,7 +73,7 @@ const NUL = String.fromCharCode(0);
 /** Separators of the `git log` format below (ASCII "unit" and "record" separators). */
 const FIELD_END = String.fromCharCode(0x1f);
 const RECORD_END = String.fromCharCode(0x1e);
-const LOG_FORMAT = '%H%x1f%an%x1f%ae%x1f%at%x1f%s%x1e';
+const LOG_FORMAT = '%H%x1f%an%x1f%ae%x1f%at%x1f%s%x1f%P%x1e';
 
 /** Applied to the clone itself, so even the very first checkout writes "\n" files on Windows. */
 const LOCAL_CONFIG: ReadonlyArray<readonly [string, string]> = [
@@ -245,12 +245,21 @@ function unexpectedOutput(what: string, text: string): Error {
   return new Error(`Unexpected output of ${what}: ${text.slice(0, 200)}`);
 }
 
-function parseLog(output: string): CommitInfo[] {
-  const commits: CommitInfo[] = [];
+/** A commit as `git log` reports it, with the commits it was made on top of. */
+interface LoggedCommit {
+  info: CommitInfo;
+  parents: string[];
+}
+
+function parseLog(output: string): LoggedCommit[] {
+  const commits: LoggedCommit[] = [];
   for (const record of output.split(RECORD_END)) {
-    const [sha, authorName, authorEmail, seconds, subject] = record.replace(/^\s+/, '').split(FIELD_END);
+    const [sha, authorName, authorEmail, seconds, subject, parents] = record.replace(/^\s+/, '').split(FIELD_END);
     if (!sha || seconds === undefined) continue;
-    commits.push({ sha, authorName, authorEmail, time: Number(seconds) * 1000, subject: subject ?? '' });
+    commits.push({
+      info: { sha, authorName, authorEmail, time: Number(seconds) * 1000, subject: subject ?? '' },
+      parents: (parents ?? '').split(' ').filter((parent) => parent !== ''),
+    });
   }
   return commits;
 }
@@ -396,7 +405,9 @@ export class RepoService {
     await local(['check-ref-format', '--branch', branch]);
 
     const remoteRef = `refs/remotes/origin/${branch}`;
-    const remoteSha = await revParse(remoteRef);
+    // Asked of the list, not of git: on a Windows disk `rev-parse` also finds "master" when
+    // "Master" is asked for, and the save would then create a second branch on the server.
+    const remoteSha = remoteBranches.includes(branch) ? await revParse(remoteRef) : null;
     if (remoteSha === null && !remoteEmpty && params.createBranch !== true) {
       // The repository has branches, and this is not one of them: nearly always a slip of the
       // keyboard ("mian"). Creating it would show the whole schedule as "my changes", and the
@@ -648,8 +659,9 @@ export class RepoService {
    * Who last edited each event of the week's file at HEAD, and when ("git blame" by content).
    *
    * The commits that touched `weeks/<weekStart>.json` are read newest first (at most 400),
-   * and an event belongs to the newest commit in which its content differs from the version
-   * before — the content, not the text line. `git blame` itself goes by lines, and in a JSON
+   * and an event belongs to the newest commit that has it as it is now while none of that
+   * commit's parents had it so — the content, not the text line; each commit is compared with
+   * its own parents, so a merge of two branches does not take credit for what they brought. `git blame` itself goes by lines, and in a JSON
    * list the last line has no comma: adding an event behind it rewrites that line, and blame
    * then names the person who merely added a neighbour. Comparing the events themselves is
    * also indifferent to how the file is laid out.
@@ -666,32 +678,41 @@ export class RepoService {
       const path = weekPath(weekStart);
       if (headSha === null || !isDataPath(path) || !(await this.existsAt(headSha, path))) return result;
 
-      const commits = await this.log(headSha, { max: MAX_BLAME_COMMITS, path });
-      const texts = await this.readVersions(commits.map((commit) => commit.sha), path);
-      const versions = texts.map((text) => readableWeek(text, weekStart));
-      const current = versions[0] ?? null;
+      const commits = await this.logWithParents(headSha, { max: MAX_BLAME_COMMITS, path });
+      // The file as it is at HEAD, in every commit that changed it, and in each of their parents.
+      const shas = [...new Set([headSha, ...commits.flatMap((commit) => [commit.info.sha, ...commit.parents])])];
+      const texts = await this.readVersions(shas, path);
+      const weeks = new Map(shas.map((sha, index) => [sha, readableWeek(texts[index], weekStart)]));
+      const current = weeks.get(headSha) ?? null;
       if (current === null) return result;
 
-      const reachesFirstVersion = commits.length < MAX_BLAME_COMMITS;
-      const pending = new Map(current.events.map((event) => [event.id, event]));
-      let titlePending = true;
-      for (let index = 0; index < commits.length && (pending.size > 0 || titlePending); index++) {
-        const oldest = index === commits.length - 1;
-        // What the file looked like before the oldest commit looked at is not known.
-        if (oldest && !reachesFirstVersion) break;
-        const older = oldest ? null : versions[index + 1];
-        const olderEvents = new Map((older?.events ?? []).map((event) => [event.id, event]));
-        const info = blameInfoOf(commits[index]);
-        for (const [id, event] of [...pending]) {
-          if (deepEqual(olderEvents.get(id), event)) continue;
-          events[id] = info;
-          pending.delete(id);
+      const byId = new Map<string, Map<string, ScheduleEvent>>();
+      const eventIn = (sha: string, id: string): ScheduleEvent | undefined => {
+        let index = byId.get(sha);
+        if (!index) {
+          index = new Map((weeks.get(sha)?.events ?? []).map((event) => [event.id, event]));
+          byId.set(sha, index);
         }
-        if (titlePending && (older === null || older.title !== current.title)) {
-          result.title = info;
-          titlePending = false;
-        }
+        return index.get(id);
+      };
+      // The newest commit that has the event as it is now while none of its parents had it so:
+      // that commit made it what it is. A merge of two branches therefore names nobody new for
+      // what one of the branches brought along, and a change that was made and taken back
+      // belongs to whoever took it back.
+      for (const event of current.events) {
+        const author = commits.find(
+          (commit) =>
+            deepEqual(eventIn(commit.info.sha, event.id), event) &&
+            commit.parents.every((parent) => !deepEqual(eventIn(parent, event.id), event)),
+        );
+        if (author) events[event.id] = blameInfoOf(author.info);
       }
+      const titleAuthor = commits.find(
+        (commit) =>
+          weeks.get(commit.info.sha)?.title === current.title &&
+          commit.parents.every((parent) => weeks.get(parent)?.title !== current.title),
+      );
+      if (titleAuthor) result.title = blameInfoOf(titleAuthor.info);
       return result;
     });
   }
@@ -767,9 +788,14 @@ export class RepoService {
     return Number(result.stdout.trim()) || 0;
   }
 
-  /** Commits of `range`, newest first; with `path` only those that changed that file. */
-  private async log(range: string, options: { max?: number; path?: string } = {}): Promise<CommitInfo[]> {
-    const args = ['log', `--max-count=${options.max ?? MAX_INCOMING}`, `--format=${LOG_FORMAT}`, range];
+  /** Commits of `range`, newest first. */
+  private async log(range: string): Promise<CommitInfo[]> {
+    return (await this.logWithParents(range, { max: MAX_INCOMING })).map((commit) => commit.info);
+  }
+
+  /** The same with each commit's parents; with `path` only the commits that changed that file. */
+  private async logWithParents(range: string, options: { max: number; path?: string }): Promise<LoggedCommit[]> {
+    const args = ['log', `--max-count=${options.max}`, `--format=${LOG_FORMAT}`, range];
     if (options.path !== undefined) args.push('--', options.path);
     return parseLog((await this.run(args)).stdout);
   }
@@ -965,12 +991,19 @@ export class RepoService {
 
   /**
    * Stages additions, changes and deletions of data files (plus `extra` paths) — and nothing
-   * else. Only files whose content really differs from the local tip are handed to git: a
+   * else, also nothing that an earlier, failed attempt had staged.
+   * Only files whose content really differs from the local tip are handed to git: a
    * file nobody touched must not become part of somebody's save merely because git would
    * store it differently today (another line-end rule, for instance).
    */
   private async stageDataFiles(extra: readonly string[]): Promise<void> {
     const headSha = await this.revParse('HEAD');
+    // First the index is brought back to the tip. A save whose commit failed after `git add`
+    // (a hook that refused, a signing prompt that was cancelled) leaves its files staged; left
+    // there, they would go out with the NEXT save although the user has discarded them since,
+    // or make that save fail on a file that is in neither place any more.
+    if (headSha !== null) await this.runIndex(['reset', '--mixed', '--quiet', headSha]);
+    else await this.runIndex(['read-tree', '--empty']);
     const committed = headSha === null ? {} : await this.readFilesAt(headSha);
     const working = await this.readWorkingFiles();
     const changed = [...new Set([...Object.keys(committed), ...Object.keys(working)])].filter(

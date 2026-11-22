@@ -373,6 +373,9 @@ export function WeekGrid(): ReactNode {
       setSelection({ kind: 'event', id: event.id, anchor: e.currentTarget });
     } else if (e.key === 'Delete' && !readOnly) {
       e.preventDefault();
+      // A key that is held down repeats, and the focus moves on to the next event after each
+      // deletion: without this, holding Delete a moment too long would empty the week.
+      if (e.repeat) return;
       // The keyboard stays in the week: on the next event, else the one before, else the grid itself.
       const cards = [...(scrollRef.current?.querySelectorAll<HTMLElement>('.wg-event') ?? [])];
       const index = cards.indexOf(e.currentTarget);

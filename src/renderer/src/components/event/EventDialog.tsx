@@ -172,6 +172,8 @@ export function EventDialog({ dialog }: { dialog: Extract<DialogState, { type: '
   const dirty = useMemo(() => !deepEqual(normalizeEvent(draft), normalizeEvent(opened)), [draft, opened]);
   const [asking, setAsking] = useState(false);
   const keepEditing = useRef<HTMLButtonElement>(null);
+  /** Where the keyboard was when the question came up. */
+  const cameFrom = useRef<HTMLElement | null>(null);
   // The store asks before the window closes over a half-written event.
   useEffect(() => {
     actions.setDraftDirty(dirty);
@@ -179,12 +181,16 @@ export function EventDialog({ dialog }: { dialog: Extract<DialogState, { type: '
   }, [dirty]);
   useEffect(() => {
     if (asking) keepEditing.current?.focus();
+    // Back to editing: the field that was being typed in has the keyboard again.
+    else if (cameFrom.current?.isConnected) cameFrom.current.focus();
   }, [asking]);
   /** Escape and the corner X: a changed draft is not thrown away without a question. */
   const dismiss = (): void => {
     if (asking) setAsking(false);
-    else if (dirty) setAsking(true);
-    else actions.closeDialog();
+    else if (dirty) {
+      cameFrom.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setAsking(true);
+    } else actions.closeDialog();
   };
 
   // The event was removed underneath the dialog (an update from the team, an undo): nothing left to edit.

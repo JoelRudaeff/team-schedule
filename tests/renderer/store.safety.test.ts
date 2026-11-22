@@ -392,3 +392,98 @@ describe('the question "close the window?"', () => {
     expect(store.getState().dialog).toBeNull();
   });
 });
+
+// The cases below were found by the review of the first round of fixes (pull request #1).
+
+describe('a decision on an overview that went out of date never becomes a save nobody confirmed', () => {
+  /**
+   * Save → confirm → the overview of what comes in. Then something outside the app brings the
+   * local copy up to the team's tip and keeps my change in the working files (what "git stash;
+   * git pull; git stash pop" in the data folder does): the overview is out of date, and there
+   * is nothing of the team's left to merge.
+   */
+  async function staleOverview(): Promise<{ api: GatedBackend; store: AppStoreHandle; commits: number }> {
+    const { api, store } = await start();
+    store.actions.saveEvent(W, { ...A, title: 'Mine' });
+    await store.whenIdle();
+    api.teammatePublishes(files(dataset([A, { ...B, title: 'Theirs' }])));
+    store.actions.requestPublish();
+    await store.actions.confirmPublish('my note');
+    expect(store.getState().dialog?.type).toBe('merge');
+
+    api.head = api.seen;
+    api.working = files(dataset([{ ...A, title: 'Mine' }, { ...B, title: 'Theirs' }]));
+    await store.actions.checkForUpdates({ interactive: false, silent: true });
+    expect(store.getState().dialog?.type).toBe('merge');
+    return { api, store, commits: api.team.length };
+  }
+
+  it('"update only" stays an update: nothing is published', async () => {
+    const { api, store, commits } = await staleOverview();
+
+    await store.actions.resolveMerge({ resolutions: {}, defaultResolution: 'theirs', then: 'keep-local' });
+
+    expect(api.team.length).toBe(commits);
+    expect(api.calls).not.toContain('publish');
+    expect(store.getState().dialog).toBeNull();
+    // My change is still mine and still unpublished.
+    expect(store.getState().diff.map((item) => item.key)).toEqual([`event:${W}:a`]);
+    expect(messages(store)).toContain(en.t('store.mergeOutdated'));
+    expect(messages(store)).not.toContain(en.t('store.published'));
+  });
+
+  it('"save" comes back as the Save question, with nothing sent until it is confirmed again', async () => {
+    const { api, store, commits } = await staleOverview();
+
+    await store.actions.resolveMerge({ resolutions: {}, defaultResolution: 'theirs', then: 'publish' });
+
+    expect(api.team.length).toBe(commits);
+    expect(api.calls).not.toContain('publish');
+    expect(store.getState().dialog?.type).toBe('publish');
+    expect(store.getState().busy).toBeNull();
+
+    await store.actions.confirmPublish('my note');
+    expect(api.team.length).toBe(commits + 1);
+    expect(findEvent(parse(api.team[api.team.length - 1].files), W, 'a')?.title).toBe('Mine');
+    expect(store.getState().diff).toEqual([]);
+  });
+});
+
+describe('the "Event deleted · Undo" message, when something else touches the undo steps', () => {
+  it('still undoes the deletion after a kept-aside version was discarded', async () => {
+    const { api, store } = await start();
+    // A collision leaves one version of mine kept aside.
+    store.actions.saveEvent(W, { ...A, title: 'Mine' });
+    await store.whenIdle();
+    api.teammatePublishes(files(dataset([{ ...A, title: 'Theirs' }, B])));
+    await store.actions.requestUpdate();
+    await store.actions.resolveMerge({ resolutions: {}, defaultResolution: 'aside', then: 'keep-local' });
+    expect(store.getState().aside.map((item) => item.key)).toEqual([`event:${W}:a`]);
+
+    store.actions.deleteEvent(W, 'b');
+    const toast = store.getState().toasts.find((entry) => entry.action);
+    store.actions.discardAside(`event:${W}:a`);
+
+    // The deletion is still the last change, so the button of its message still takes it back.
+    expect(store.getState().toasts.some((entry) => entry.id === toast?.id)).toBe(true);
+    toast?.action?.run();
+    expect(getWeek(store.getState().working, W).events.map((event) => event.id)).toEqual(['a', 'b']);
+    // And the discarded version did not come back with it.
+    expect(store.getState().aside).toEqual([]);
+  });
+
+  it('several deletions in a row leave one message, for the last of them', async () => {
+    const all = ['a', 'b', 'c', 'd'].map((id, index) => ev(id, { day: index as ScheduleEvent['day'] }));
+    const { store } = await start(dataset(all));
+    for (const id of ['a', 'b', 'c']) store.actions.deleteEvent(W, id);
+
+    const offers = store.getState().toasts.filter((entry) => entry.action);
+    expect(offers).toHaveLength(1);
+    offers[0].action?.run();
+    expect(getWeek(store.getState().working, W).events.map((event) => event.id)).toEqual(['c', 'd']);
+    // The earlier ones are still one Ctrl+Z each away.
+    store.actions.undo();
+    store.actions.undo();
+    expect(getWeek(store.getState().working, W).events.map((event) => event.id)).toEqual(['a', 'b', 'c', 'd']);
+  });
+});

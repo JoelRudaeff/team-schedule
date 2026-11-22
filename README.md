@@ -66,8 +66,8 @@ GitHub, GitLab, or simply a folder on a shared drive). Each computer keeps its o
   it is loaded: times land on the quarter hour and over-long texts are cut, and the app says so.
 - **Keyboard** – everything works without the mouse: `Tab` and the arrow keys move, `Enter`
   opens an event, `Delete` removes it (with *Undo*), `Ctrl+S` saves to the team,
-  `PageUp` / `PageDown` change the week, `Esc` closes — and asks first when something you
-  typed would be lost.
+  `PageUp` / `PageDown` change the week, `Esc` closes (in an event you have changed it asks
+  first).
 - **Outlook** – export a week, a date range or the whole course to an `.ics` calendar file
   that Outlook, Google Calendar and Apple Calendar open.
 
@@ -78,8 +78,8 @@ GitHub, GitLab, or simply a folder on a shared drive). Each computer keeps its o
 - Windows 10 or 11
 - [Git for Windows](https://git-scm.com/download/win) (the app uses it to talk to the
   repository; sign-in is handled by Git's own credential window)
-- Team Schedule itself: the installer `TeamSchedule-Setup-1.0.1.exe`, or the single-file
-  `TeamSchedule-Portable-1.0.1.exe` that needs no installation. Both are built from this
+- Team Schedule itself: the installer `TeamSchedule-Setup-1.0.2.exe`, or the single-file
+  `TeamSchedule-Portable-1.0.2.exe` that needs no installation. Both are built from this
   repository with one command (see [For developers](#for-developers)) and land in `dist\`;
   hand them to the team any way you like. The files are not signed, so Windows SmartScreen
   may ask once: choose *More info → Run anyway*.
@@ -188,7 +188,7 @@ Node.js 22.12 or newer and Git are required. With Node installed normally, use p
 npm install            # once; if npm skipped Electron's download: node node_modules\electron\install.js
 npm run dev            # run with hot reload
 npm run typecheck
-npm test               # ~3,500 unit, git-integration and store tests (the integration tests need git)
+npm test               # ~3,550 unit, git-integration and store tests (the integration tests need git)
 npm run build          # production build into out\
 npm run test:e2e       # end-to-end tests: Playwright drives the built app (run the build first)
 npm run dist           # build + installer and portable exe into dist\

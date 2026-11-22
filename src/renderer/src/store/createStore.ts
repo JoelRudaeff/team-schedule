@@ -563,6 +563,8 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
   }
 
   function resetRepositoryView(): void {
+    // An offer to undo something in the schedule that is being left makes no sense any more.
+    retireUndoToast();
     passthrough = {};
     baseRaw = {};
     undoStack = [];
@@ -785,6 +787,8 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
         toast({ kind: 'info', message: t('store.noteRestored', { kind: t(KIND_LABEL[note.kind]), name: note.name }) });
       } else if (note.code === 'entity-merged') {
         toast({ kind: 'info', message: t('store.noteMerged', { kind: t(KIND_LABEL[note.kind]), name: note.name }) });
+      } else if (note.code === 'entity-duplicate') {
+        toast({ kind: 'warning', sticky: true, message: t('store.noteDuplicate', { kind: t(KIND_LABEL[note.kind]), name: note.name }) });
       } else if (note.code === 'course-dates-reset') {
         toast({ kind: 'warning', message: t('store.noteCourseDates') });
       } else {
@@ -967,7 +971,12 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
     set({ busy: null, dialog: { type: 'merge', session } });
   }
 
-  async function publishFlow(note: string, changedAgain = false): Promise<void> {
+  /**
+   * `askAgain`: the flow is run again because the overview the user decided on went out of
+   * date. Should there be nothing of the team's to merge any more, the save is not simply
+   * sent: the Save question is put again, with the list of what would go out now.
+   */
+  async function publishFlow(note: string, changedAgain = false, askAgain = false): Promise<void> {
     const failureTitle = t('store.publishFailedTitle');
     await flush();
     const status = await api.fetch({ interactive: true });
@@ -995,6 +1004,10 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
     }
 
     if (status.behind === 0) {
+      if (askAgain) {
+        set({ busy: null, dialog: { type: 'publish' } });
+        return;
+      }
       const result = await api.publish({
         files: buildFileMap(state.working, passthrough),
         message: commitMessage(note, state.diff),
@@ -1300,7 +1313,10 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
           // outside the app moved the local copy …). A decision made on the old picture is
           // never applied to the new one: the overview is built again and the user decides again.
           toast({ kind: 'warning', message: t('store.mergeOutdated') });
-          return session.mode === 'publish' ? publishFlow(session.note, true) : updateFlow(true);
+          // Nothing goes out that the user has not seen and confirmed again: "update only" stays
+          // an update, and a save comes back with a question before anything is sent.
+          if (session.mode === 'update' || choice.then === 'keep-local') return updateFlow(true);
+          return publishFlow(session.note, true, true);
         }
         await finishMerge(session, choice);
       });
@@ -1383,9 +1399,9 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
       if (!state.aside.some((entry) => entry.key === key)) return;
       const aside = state.aside.filter((entry) => entry.key !== key);
       // A discarded version must not come back through undo or redo.
-      const forget = (step: UndoStep): UndoStep => ({ ...step, aside: step.aside.filter((entry) => entry.key !== key) });
-      undoStack = undoStack.map(forget);
-      redoStack = redoStack.map(forget);
+      // The steps themselves stay the same objects: the "event deleted · Undo" message knows
+      // its step by identity, and its button must go on working after this.
+      for (const step of [...undoStack, ...redoStack]) step.aside = step.aside.filter((entry) => entry.key !== key);
       set({ aside });
       void saveAside(aside);
     },

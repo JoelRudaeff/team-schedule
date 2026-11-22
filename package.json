@@ -1,7 +1,7 @@
 {
   "name": "team-schedule",
   "productName": "Team Schedule",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Weekly team schedule (Hebrew / English) that syncs through a shared git repository",
   "license": "MIT",
   "private": true,
@@ -29,6 +29,12 @@
       "package.json"
     ],
     "asar": true,
+    "extraFiles": [
+      {
+        "from": "LICENSE",
+        "to": "LICENSE.txt"
+      }
+    ],
     "electronLanguages": [
       "en-US",
       "en-GB",

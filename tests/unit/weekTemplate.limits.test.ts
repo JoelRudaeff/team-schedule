@@ -171,3 +171,40 @@ describe('a real file from elsewhere, end to end', () => {
     expect(isPlainId(result.dataset.config.teachers[0].id)).toBe(true);
   });
 });
+
+describe('one over-long name used by several lessons of a file', () => {
+  const LONG = `Dr. ${'x'.repeat(100)}`; // 104 characters, the editor allows 80
+
+  it.each([
+    ['an id the import does not keep', 'teacher.1'],
+    ['an empty id', ''],
+    ['a plain id', 'abc123'],
+  ])('%s: the three lessons get ONE new teacher, and the cut is counted once', (_what, id) => {
+    const events = [0, 1, 2].map((day) => templateEvent({ day: day as TemplateEvent['day'], teachers: [{ id, name: LONG }] }));
+    const result = load(template(events));
+    const teachers = result.dataset.config.teachers;
+
+    expect(result.created.teachers).toBe(1);
+    expect(teachers).toHaveLength(1);
+    expect(teachers[0].name).toHaveLength(TEXT_LIMITS.entityName);
+    for (const event of getWeek(result.dataset, TARGET).events) expect(event.teacherIds).toEqual([teachers[0].id]);
+    expect(result.shortened).toBe(1);
+  });
+
+  it('loading the same file again, or another file with the same long name, adds nothing', () => {
+    const once = load(template([templateEvent({ teachers: [{ id: 'abc123', name: LONG }] })]));
+    const twice = load(template([templateEvent({ teachers: [{ id: 'abc123', name: LONG }] })]), once.dataset);
+    const other = load(template([templateEvent({ teachers: [{ id: 'zzz999', name: LONG }] })]), twice.dataset);
+
+    expect(other.dataset.config.teachers).toHaveLength(1);
+    expect([twice.created.teachers, other.created.teachers]).toEqual([0, 0]);
+    // Nothing new was cut either: the entry was found under its stored name.
+    expect([twice.shortened, other.shortened]).toEqual([0, 0]);
+  });
+
+  it('a name that is only blanks after the cut cannot become an entry', () => {
+    const result = load(template([templateEvent({ location: { id: 'loc1234567', name: '   ' } })]));
+    expect(result.dataset.config.locations).toEqual([]);
+    expect(getWeek(result.dataset, TARGET).events[0].locationId).toBeNull();
+  });
+});

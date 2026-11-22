@@ -95,11 +95,12 @@ function GoTo(): ReactNode {
   return (
     <div className="tb-goto" title={t('toolbar.weekNumberHint')}>
       <NumberInput
-        // A fresh box for every week: nothing typed for another week stays behind.
-        key={weekStart}
         id="tb-week-number"
         value={value}
         onChange={setValue}
+        // The text is kept here, so the box can be emptied after a jump and still be the same
+        // box: the next week number can be typed right away.
+        text={entry}
         onTextChange={(text) => {
           setEntry(text);
           setFailed(null);

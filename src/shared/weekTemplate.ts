@@ -331,6 +331,11 @@ export function isPlainId(id: string): boolean {
   return /^[A-Za-z0-9_-]{1,64}$/.test(id) && !(id in Object.prototype);
 }
 
+/** `text` cut to `limit` characters, never through the middle of a character that is stored as a pair (emoji). */
+function clip(text: string, limit: number): string {
+  return text.length <= limit ? text : text.slice(0, limit).replace(/[\uD800-\uDBFF]$/, '');
+}
+
 /** The time range moved onto the 15-minute grid: nearest quarter hour, never shorter than one step, inside the day. */
 function onGrid(range: { start: Minutes; end: Minutes }): { start: Minutes; end: Minutes } {
   const snap = (minutes: Minutes): Minutes => Math.round(minutes / IMPORT_STEP) * IMPORT_STEP;
@@ -428,22 +433,26 @@ export function importWeekTemplate(
   let next = dataset;
   let shortened = 0;
   let snapped = 0;
+  /** The text cut to the limit, counted as shortened when something had to go. */
   const cut = (text: string, limit: number): string => {
-    if (text.length <= limit) return text;
-    shortened += 1;
-    // Not through the middle of a character that is stored as a pair (emoji).
-    return text.slice(0, limit).replace(/[\uD800-\uDBFF]$/, '');
+    if (text.length > limit) shortened += 1;
+    return clip(text, limit);
   };
 
   const resolve = (kind: EntityKind, ref: TemplateRef | TemplateSubject): string | null => {
-    const known = findEntity(next.config, kind, ref.id) ?? findEntityByName(next.config, kind, ref.name);
+    // The name as the list will hold it. It is cut BEFORE it is looked up: looked up in full,
+    // the next lesson of the same over-long teacher would not find the entry this one made,
+    // and every lesson would add the teacher again.
+    const name = clip(ref.name.trim(), TEXT_LIMITS.entityName);
+    const known = findEntity(next.config, kind, ref.id) ?? findEntityByName(next.config, kind, name);
     if (known) return known.id;
     // A list entry needs a name (addEntity refuses a blank one): nothing to point to.
-    if (ref.name.trim() === '') return null;
+    if (name === '') return null;
     // Step 1 found no entry of this kind with the file's id, so that id is free to keep —
     // unless the file left it empty, which is not an id a list can hold.
     const id = isPlainId(ref.id) ? ref.id : freshId(newId, new Set(entityList(next.config, kind).map((item) => item.id)));
-    next = addEntity(next, kind, { ...ref, id, name: cut(ref.name.trim(), TEXT_LIMITS.entityName) });
+    if (name.length < ref.name.trim().length) shortened += 1;
+    next = addEntity(next, kind, { ...ref, id, name });
     created[ENTITY_LIST_KEY[kind]] += 1;
     return id;
   };

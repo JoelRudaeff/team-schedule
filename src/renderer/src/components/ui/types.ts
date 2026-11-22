@@ -290,6 +290,11 @@ export interface TextAreaProps extends Omit<TextareaHTMLAttributes<HTMLTextAreaE
 export interface NumberInputProps {
   value: number | null;
   onChange: (value: number | null) => void;
+  /**
+   * The text in the box, when the parent keeps it (together with `onTextChange`). The parent
+   * can then empty the box without replacing it, so the box keeps the keyboard focus.
+   */
+  text?: string;
   /** The text in the box after every key stroke, usable or not. */
   onTextChange?: (text: string) => void;
   min?: number;

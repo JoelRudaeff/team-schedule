@@ -37,9 +37,10 @@ describe('placeholders', () => {
     const text = translate('he', 'grid.clashLocation', { name: 'Room A', other: 'Overlap 2' });
     expect(text).toContain(`${FSI}Room A${PDI}`);
     expect(text).toContain(`${FSI}Overlap 2${PDI}`);
-    // The sentence itself starts with what the table starts with — not with the name's direction mark alone.
-    expect(withoutIsolates(text)).toBe(withoutIsolates(translate('he', 'grid.clashLocation', { name: 'Room A', other: 'Overlap 2' })));
-    expect(withoutIsolates(text)).toContain('Room A');
+    // Apart from the marks it is the sentence of the table with the two texts put in.
+    expect(withoutIsolates(text)).toBe(he.grid.clashLocation.replace('{name}', 'Room A').replace('{other}', 'Overlap 2'));
+    // And the marks sit around the texts only: the sentence does not begin or end with one of its own.
+    expect(he.grid.clashLocation).not.toMatch(/[\u2066-\u2069]/);
   });
 
   it('a number is put in as it is', () => {

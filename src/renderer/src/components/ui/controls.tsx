@@ -190,6 +190,7 @@ export function TextArea({ value, onChange, invalid, testId, className, rows, ..
 export function NumberInput({
   value,
   onChange,
+  text: givenText,
   onTextChange,
   min,
   max,
@@ -203,16 +204,18 @@ export function NumberInput({
   onEnter,
   testId,
 }: NumberInputProps): ReactNode {
-  // What is in the box is kept here, so an entry that cannot be used (too large, not a whole
-  // number) stays visible and is marked instead of vanishing while it is being typed.
-  const [text, setText] = useState(value === null ? '' : String(value));
+  // What is in the box is kept here (or by the parent, when it passes `text`), so an entry
+  // that cannot be used (too large, not a whole number) stays visible and is marked instead
+  // of vanishing while it is being typed.
+  const [ownText, setOwnText] = useState(value === null ? '' : String(value));
   useEffect(() => {
-    setText((current) => {
+    setOwnText((current) => {
       const shown = parseWholeNumber(current, min, max);
       if (value === null) return shown === null ? current : '';
       return shown === value ? current : String(value);
     });
   }, [value, min, max]);
+  const text = givenText ?? ownText;
   const unusable = text.trim() !== '' && parseWholeNumber(text, min, max) === null;
 
   return (
@@ -231,7 +234,7 @@ export function NumberInput({
       aria-invalid={invalid || unusable || undefined}
       onChange={(event) => {
         const next = event.target.value;
-        setText(next);
+        setOwnText(next);
         onTextChange?.(next);
         onChange(parseWholeNumber(next, min, max));
       }}

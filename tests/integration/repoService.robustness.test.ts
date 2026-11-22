@@ -5,7 +5,7 @@
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { PublishResult } from '@shared/api';
 import { RAW_BYTES_PREFIX, buildFileMap, filesToDataset, serializeWeek } from '@shared/serialize';
 import type { FileMap, ScheduleEvent, WeekData } from '@shared/types';
@@ -558,5 +558,194 @@ describe('finding git', () => {
     } finally {
       process.env.PATH = saved;
     }
+  });
+});
+
+// The cases below were found by the review of the first round of fixes (pull request #1).
+
+// ───────────────────────────── a save after a save whose commit failed ─────────────────────────────
+
+describe('a save after one whose commit failed (its files were left staged)', () => {
+  const WEEK2 = '2026-11-29';
+  const WEEK2_FILE = `weeks/${WEEK2}.json`;
+  const BOTH: FileMap = { ...FIRST, [WEEK2_FILE]: weekText('Week 2', [], WEEK2) };
+  let box: Sandbox;
+  let dana: RepoService;
+
+  beforeEach(async () => {
+    box = await createSandbox();
+    dana = (await box.connect('dana', DANA)).service;
+    ok(await dana.createSchedule(BOTH, 'Create schedule'));
+  });
+  afterEach(() => box.cleanup());
+
+  /** A save that gets as far as `git add` and is then refused, as by a cancelled signing prompt. */
+  async function saveThatFailsAtCommit(files: FileMap): Promise<void> {
+    await box.installHook(join(dana.dir, '.git'), 'pre-commit', '#!/bin/sh\necho "commit refused for now" >&2\nexit 1\n');
+    const refused = await dana.publish(files, 'refused', (await dana.status()).remoteSha);
+    expect(refused.ok).toBe(false);
+    await rm(join(dana.dir, '.git', 'hooks', 'pre-commit'));
+    // This is the state the next save starts from: the change is staged, nothing is committed.
+    expect((await box.raw(dana.dir, 'diff', '--cached', '--name-only')).stdout.trim()).not.toBe('');
+  }
+
+  it('what was discarded after the failed save is not published by the next one', async () => {
+    // Save 1: Dana wipes week 1 by mistake. The commit fails. She discards her changes.
+    await saveThatFailsAtCommit({ ...BOTH, [WEEK_FILE]: weekText('MISTAKE', []) });
+    expect((await dana.discardLocal()).workingFiles[WEEK_FILE]).toBe(BOTH[WEEK_FILE]);
+
+    // Save 2: only week 2 is edited.
+    const edited = { ...BOTH, [WEEK2_FILE]: weekText('Week 2 edited', [], WEEK2) };
+    ok(await dana.publish(edited, 'Edit week 2', (await dana.status()).remoteSha));
+
+    const touched = (await box.raw(box.remote, 'show', '--name-only', '--format=', dana.branch)).stdout.trim().split('\n');
+    expect(touched).toEqual([WEEK2_FILE]);
+    expect((await box.raw(box.remote, 'cat-file', 'blob', `${dana.branch}:${WEEK_FILE}`)).stdout).toBe(BOTH[WEEK_FILE]);
+    expect((await box.raw(dana.dir, 'status', '--porcelain')).stdout).toBe('');
+  });
+
+  it('a removal whose commit failed is saved on the next try', async () => {
+    const withoutWeek2: FileMap = { 'schedule.json': CONFIG_TEXT, [WEEK_FILE]: BOTH[WEEK_FILE] };
+    await saveThatFailsAtCommit(withoutWeek2);
+
+    ok(await dana.publish(withoutWeek2, 'Remove week 2', (await dana.status()).remoteSha));
+
+    const tree = (await box.raw(box.remote, 'ls-tree', '-r', '--name-only', dana.branch)).stdout.split('\n').filter(Boolean);
+    expect(tree).not.toContain(WEEK2_FILE);
+    expect(tree).toContain(WEEK_FILE);
+  });
+
+  it('a file somebody staged by hand in the app\'s folder does not ride along either', async () => {
+    await writeFile(join(dana.dir, 'notes.txt'), 'not part of the schedule');
+    await box.raw(dana.dir, 'add', 'notes.txt');
+
+    ok(await dana.publish({ ...BOTH, [WEEK_FILE]: weekText('Week 1 renamed', [E1]) }, 'Rename week 1', (await dana.status()).remoteSha));
+
+    const touched = (await box.raw(box.remote, 'show', '--name-only', '--format=', dana.branch)).stdout.trim().split('\n');
+    expect(touched).toEqual([WEEK_FILE]);
+    // The file itself is still there, merely not staged any more.
+    expect(await readFile(join(dana.dir, 'notes.txt'), 'utf8')).toBe('not part of the schedule');
+  });
+});
+
+// ───────────────────────────── a branch name in the wrong case ─────────────────────────────
+
+describe('a branch name that differs from the team branch only in upper / lower case', () => {
+  let box: Sandbox;
+  afterAll(() => box.cleanup());
+
+  it('is refused also in a clone that is re-used, where a Windows disk finds the branch under either spelling', async () => {
+    box = await createSandbox();
+    const dana = (await box.connect('dana', DANA)).service;
+    ok(await dana.createSchedule(FIRST, 'Create schedule'));
+    const typo = dana.branch.charAt(0).toUpperCase() + dana.branch.slice(1); // "Main" / "Master"
+    expect(typo).not.toBe(dana.branch);
+
+    // Yossi is connected and has received one update, as every working clone has.
+    const yossi = (await box.connect('yossi', YOSSI)).service;
+    ok(await dana.publish({ ...FIRST, [WEEK_FILE]: weekText('Week 1 b', [E1]) }, 'change', (await dana.status()).remoteSha));
+    await yossi.fetch(false);
+    const remote = (await yossi.loadRemote())!;
+    expect((await yossi.applyUpdate(remote.files, remote.sha)).ok).toBe(true);
+
+    // He lands on the set-up screen again and types the branch with a capital letter.
+    const error = await expectGitError(box.connect('yossi', YOSSI, typo));
+    expect(error.code).toBe('branch-missing');
+    expect(error.branches).toEqual([dana.branch]);
+
+    // The clone is as it was, and still works under the right name.
+    const again = await box.connect('yossi', YOSSI, dana.branch);
+    expect(again.service.branch).toBe(dana.branch);
+    expect((await again.service.status())).toMatchObject({ ahead: 0, behind: 0 });
+    const branches = (await box.raw(box.remote, 'for-each-ref', '--format=%(refname:short)', 'refs/heads')).stdout.trim().split('\n');
+    expect(branches).toEqual([dana.branch]);
+  });
+});
+
+// ───────────────────────────── who last edited, with a merge in the history ─────────────────────────────
+
+describe('who last edited an event, when two branches were merged outside the app', () => {
+  let box: Sandbox;
+  afterEach(() => box.cleanup());
+
+  it.each([
+    ['the branch that edits A is committed last', true],
+    ['the branch that adds C is committed last', false],
+  ])('%s: A belongs to Xavier, C to Yael, B to Dana, and nothing to whoever merged', async (_name, editLast) => {
+    box = await createSandbox();
+    const A = ev('aaa', 0, 'A');
+    const B = ev('bbb', 1, 'B');
+    const C = ev('ccc', 3, 'C');
+    const dana = (await box.connect('dana', DANA)).service;
+    ok(await dana.createSchedule({ 'schedule.json': CONFIG_TEXT, [WEEK_FILE]: serializeWeek(week([A, B])) }, 'Dana creates A and B'));
+
+    const outside = join(box.root, 'outsider');
+    await box.raw(box.root, 'clone', '--quiet', box.remote, outside);
+    const file = join(outside, ...WEEK_FILE.split('/'));
+    const commitAs = async (who: string, message: string): Promise<void> => {
+      await box.raw(outside, 'add', '-A');
+      await box.raw(outside, '-c', `user.name=${who}`, '-c', `user.email=${who.toLowerCase()}@example.com`, 'commit', '--quiet', '-m', message);
+    };
+    const editA = async (): Promise<void> => {
+      await box.raw(outside, 'checkout', '--quiet', '-b', 'x', `origin/${dana.branch}`);
+      await writeFile(file, serializeWeek(week([{ ...A, title: 'A edited by Xavier' }, B])));
+      await commitAs('Xavier', 'Xavier edits A');
+    };
+    const addC = async (): Promise<void> => {
+      await box.raw(outside, 'checkout', '--quiet', '-b', 'y', `origin/${dana.branch}`);
+      await writeFile(file, serializeWeek(week([A, B, C])));
+      await commitAs('Yael', 'Yael adds C');
+    };
+    if (editLast) {
+      await addC();
+      await editA();
+    } else {
+      await editA();
+      await addC();
+    }
+    // Somebody merges the two branches; the result holds both changes.
+    await box.raw(outside, 'checkout', '--quiet', 'x');
+    await box.raw(outside, '-c', 'user.name=Merger', '-c', 'user.email=m@example.com', 'merge', '--quiet', '--no-ff', '--no-commit', '-s', 'ours', 'y');
+    await writeFile(file, serializeWeek(week([{ ...A, title: 'A edited by Xavier' }, B, C])));
+    await commitAs('Merger', 'Merge branch y');
+    await box.raw(outside, 'push', '--quiet', 'origin', `HEAD:${dana.branch}`);
+
+    const yossi = (await box.connect('yossi', YOSSI)).service;
+    const blame = await yossi.blame(WEEK);
+
+    expect(blame.events.aaa?.authorName).toBe('Xavier');
+    expect(blame.events.ccc?.authorName).toBe('Yael');
+    expect(blame.events.bbb?.authorName).toBe(DANA.name);
+    expect(blame.title?.summary).toBe('Dana creates A and B');
+  });
+
+  it('what a merge itself changed (a hand-made resolution) belongs to whoever merged', async () => {
+    box = await createSandbox();
+    const A = ev('aaa', 0, 'A');
+    const dana = (await box.connect('dana', DANA)).service;
+    ok(await dana.createSchedule({ 'schedule.json': CONFIG_TEXT, [WEEK_FILE]: serializeWeek(week([A])) }, 'Dana creates A'));
+
+    const outside = join(box.root, 'outsider');
+    await box.raw(box.root, 'clone', '--quiet', box.remote, outside);
+    const file = join(outside, ...WEEK_FILE.split('/'));
+    const commitAs = async (who: string, message: string): Promise<void> => {
+      await box.raw(outside, 'add', '-A');
+      await box.raw(outside, '-c', `user.name=${who}`, '-c', `user.email=${who.toLowerCase()}@example.com`, 'commit', '--quiet', '-m', message);
+    };
+    await box.raw(outside, 'checkout', '--quiet', '-b', 'x', `origin/${dana.branch}`);
+    await writeFile(file, serializeWeek(week([{ ...A, title: 'Xavier says' }])));
+    await commitAs('Xavier', 'Xavier renames A');
+    await box.raw(outside, 'checkout', '--quiet', '-b', 'y', `origin/${dana.branch}`);
+    await writeFile(file, serializeWeek(week([{ ...A, title: 'Yael says' }])));
+    await commitAs('Yael', 'Yael renames A');
+    await box.raw(outside, 'checkout', '--quiet', 'x');
+    await box.raw(outside, '-c', 'user.name=Merger', '-c', 'user.email=m@example.com', 'merge', '--quiet', '--no-ff', '--no-commit', '-s', 'ours', 'y');
+    // Neither side's title: the merger writes a third one.
+    await writeFile(file, serializeWeek(week([{ ...A, title: 'Settled by the merger' }])));
+    await commitAs('Merger', 'Merge branch y');
+    await box.raw(outside, 'push', '--quiet', 'origin', `HEAD:${dana.branch}`);
+
+    const blame = await (await box.connect('yossi', YOSSI)).service.blame(WEEK);
+    expect(blame.events.aaa?.authorName).toBe('Merger');
   });
 });

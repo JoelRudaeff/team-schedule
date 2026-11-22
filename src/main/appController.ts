@@ -186,6 +186,9 @@ export class AppController implements ApiHandlers {
   /** Resolves when no git or settings work is in flight (never rejects). Awaited before the app quits. */
   async idle(): Promise<void> {
     await this.repoQueue.idle();
+    // A check for updates is only started inside the queue; its wait for the server runs on.
+    await this.service?.idle();
+    await this.repoQueue.idle();
     await this.store.idle();
   }
 
