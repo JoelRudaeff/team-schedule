@@ -835,17 +835,21 @@ function entitiesUsedBy(configs: readonly Dataset['config'][], event: ScheduleEv
 }
 
 /**
- * True when the deleting side took nothing out of that field of the event but entries it
- * deleted altogether — which is what deleting entries does to an event. It may have deleted
- * several that share the lesson (Dana AND Vered), so the comparison is with the base event
- * minus EVERY entry that side no longer has (`deleter` is its settings), not minus the one
- * entry in question. An event that was moved to somebody else on purpose (Dana → Uri) is
- * not that.
+ * True when the deleting side took the entry out of that field of the event, and nothing
+ * else but entries it deleted altogether — which is what deleting entries does to an event.
+ * It may have deleted several that share the lesson (Dana AND Vered), so the comparison is
+ * with the base event minus EVERY entry that side no longer has (`deleter` is its settings),
+ * not minus the one entry in question. What that side left on the event stays in the
+ * comparison whatever the lists say: a file may name an entry that is in no list, and such a
+ * reference is nothing that side removed. An event that was moved to somebody else on
+ * purpose (Dana → Uri) is not "only stripped".
  */
 function onlyStripped(base: ScheduleEvent, changed: ScheduleEvent, kind: EntityKind, id: string, deleter: Dataset['config']): boolean {
-  if (!eventReferences(base, kind, id)) return false;
-  const left = referencedIds(base, kind).filter((ref) => findEntity(deleter, kind, ref) !== undefined);
-  return deepEqual(referencedIds(changed, kind), left);
+  const before = referencedIds(base, kind);
+  const now = referencedIds(changed, kind);
+  if (!before.includes(id) || now.includes(id)) return false;
+  const left = before.filter((ref) => now.includes(ref) || findEntity(deleter, kind, ref) !== undefined);
+  return deepEqual(now, left);
 }
 
 /**

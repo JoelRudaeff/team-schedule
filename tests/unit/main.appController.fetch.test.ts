@@ -7,7 +7,10 @@
  *
  * shutdown() is what the app awaits when its last window has closed: it ends the waiting
  * check instead of sitting it out. (A second review found that a closed app could otherwise
- * not be opened again until git gave up on the server.)
+ * not be opened again until git gave up on the server.) It gives a check that is simply at
+ * work a moment to finish first, and it never stops waiting for anything else. (A third
+ * review found that ending a healthy check by force can leave a git lock file behind, and
+ * that the test of "waits for everything else" passed without the wait.)
  */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -30,11 +33,17 @@ interface Rig {
   connects: number;
   /** How often the pretend service was told to stop its fetch. */
   stops: number;
+  /** While set, writing the working files stays open until `finishWrite()` is called. */
+  holdWrites: boolean;
+  finishWrite: () => void;
 }
+
+/** The moment shutdown() gives the work in flight (the app itself uses two seconds). */
+const GRACE_MS = 60;
 
 async function createRig(): Promise<Rig> {
   const root = await mkdtemp(join(tmpdir(), 'team-schedule-pr-controller-'));
-  const rig = { root, log: [] as string[], connects: 0, stops: 0, finishFetch: () => undefined } as unknown as Rig;
+  const rig = { root, log: [] as string[], connects: 0, stops: 0, holdWrites: false, finishWrite: () => undefined, finishFetch: () => undefined } as unknown as Rig;
   let fetching: Promise<void> = Promise.resolve();
 
   const service = (dir: string, url: string, branch: string): RepoHandle => ({
@@ -66,7 +75,11 @@ async function createRig(): Promise<Rig> {
     },
     loadSnapshot: async () => ({ status: STATUS, baseFiles: {}, workingFiles: {} }),
     loadRemote: async () => null,
-    writeWorking: async () => void rig.log.push('writeWorking done'),
+    writeWorking: async () => {
+      rig.log.push('writeWorking started');
+      if (rig.holdWrites) await new Promise<void>((resolve) => (rig.finishWrite = resolve));
+      rig.log.push('writeWorking done');
+    },
     applyUpdate: async () => ({ ok: true, status: STATUS }),
     publish: async () => ({ ok: true, status: STATUS, commitSha: null }),
     createSchedule: async () => ({ ok: true, status: STATUS, commitSha: null }),
@@ -96,7 +109,7 @@ async function createRig(): Promise<Rig> {
     acknowledgeCloseRequest: () => undefined,
     closeWindow: () => undefined,
   };
-  rig.controller = new AppController({ store: new LocalStore(join(root, 'userData')), desktop, git: layer });
+  rig.controller = new AppController({ store: new LocalStore(join(root, 'userData')), desktop, git: layer, shutdownGraceMs: GRACE_MS });
   await rig.controller.boot();
   const connected = await rig.controller.connectRepo({ url: URL, branch: null, userName: 'Dana', userEmail: 'dana@example.com' });
   expect(connected.ok).toBe(true);
@@ -111,6 +124,7 @@ describe('a background fetch that waits for the server, seen from the controller
   let rig: Rig;
   afterEach(async () => {
     rig.finishFetch();
+    rig.finishWrite();
     await rig.controller.idle();
     await rm(rig.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
@@ -145,25 +159,61 @@ describe('a background fetch that waits for the server, seen from the controller
     expect(idleBeforeFetchEnded).toBe(false);
   });
 
-  it('shutdown(), which is awaited when the last window has closed, ends it instead of waiting', async () => {
+  it('shutdown(), which is awaited when the last window has closed, ends it instead of waiting — after a moment', async () => {
     rig = await createRig();
     const fetch = rig.controller.fetch({ interactive: false });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(rig.log).toEqual(['fetch started']);
 
-    expect(await settled(rig.controller.shutdown())).toBe(true);
+    const closing = rig.controller.shutdown();
+    // Not at once: a check that is simply at work would be over in this moment.
+    expect(await settled(closing, GRACE_MS / 3)).toBe(false);
+    expect(rig.stops).toBe(0);
 
+    expect(await settled(closing, GRACE_MS * 5)).toBe(true);
     expect(rig.log).toEqual(['fetch started', 'stopFetch', 'fetch finished']);
     // Whoever asked for the check still gets an answer.
     expect(await settled(fetch)).toBe(true);
   });
 
-  it('shutdown() still waits for everything else: an edit that is being written is finished first', async () => {
+  it('a check that finishes by itself within that moment is never stopped by force', async () => {
     rig = await createRig();
+    const fetch = rig.controller.fetch({ interactive: false });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const closing = rig.controller.shutdown();
+    rig.finishFetch();
+    await closing;
+    await fetch;
+    // The moment has long passed: nothing was stopped afterwards either.
+    await new Promise((resolve) => setTimeout(resolve, GRACE_MS * 2));
+
+    expect(rig.stops).toBe(0);
+    expect(rig.log).toEqual(['fetch started', 'fetch finished']);
+  });
+
+  it('with nothing in flight shutdown() resolves at once, without waiting out that moment', async () => {
+    rig = await createRig();
+    expect(await settled(rig.controller.shutdown(), GRACE_MS / 3)).toBe(true);
+    expect(rig.stops).toBe(0);
+  });
+
+  it('shutdown() waits for everything else for as long as it takes: an edit that is being written is finished first', async () => {
+    rig = await createRig();
+    rig.holdWrites = true;
     const write = rig.controller.writeWorking({ 'schedule.json': '{}\n' });
-    await rig.controller.shutdown();
-    expect(rig.log).toContain('writeWorking done');
-    expect(rig.stops).toBe(1);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(rig.log).toEqual(['writeWorking started']);
+
+    const closing = rig.controller.shutdown();
+    // Long after the moment given to a check, the app is still not allowed to quit …
+    expect(await settled(closing, GRACE_MS * 4)).toBe(false);
+    expect(rig.log).toEqual(['writeWorking started', 'stopFetch']);
+
+    // … and it is, as soon as the edit is on disk.
+    rig.finishWrite();
+    expect(await settled(closing)).toBe(true);
+    expect(rig.log).toEqual(['writeWorking started', 'stopFetch', 'writeWorking done']);
     await write;
   });
 });

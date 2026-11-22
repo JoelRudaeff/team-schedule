@@ -559,7 +559,11 @@ describe('two list entries of the same name that an update folds into one', () =
 });
 
 describe('the "Event deleted · Undo" message, when the app is connected to a repository again', () => {
-  it('is taken away with the undo steps: its button cannot touch the schedule that is on screen afterwards', async () => {
+  // What the user must be able to rely on: afterwards there is no such offer on screen, and a
+  // click on one that was still on its way does nothing. (Two things see to that — the busy
+  // overlay of connecting clears such messages, and the undo steps are emptied — so this test
+  // pins the outcome, not one of the two.)
+  it('is gone, there is nothing left to undo, and its button cannot touch the schedule that is on screen afterwards', async () => {
     const { store } = await start();
     store.actions.deleteEvent(W, 'a');
     await store.whenIdle();

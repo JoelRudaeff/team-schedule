@@ -115,11 +115,21 @@ export interface AppControllerOptions {
   store: LocalStore;
   desktop: Desktop;
   git: GitLayer;
+  /** See SHUTDOWN_GRACE_MS (tests pass a shorter time). */
+  shutdownGraceMs?: number;
 }
 
 // ───────────────────────────── helpers ─────────────────────────────
 
 const MAX_OPEN_FILE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * How long the work that is in flight when the last window closes may take to finish by
+ * itself before a check for updates that is still waiting is ended (see shutdown()). A
+ * healthy check is over well within this time; the closed app lingers no longer than this
+ * for one that is not.
+ */
+const SHUTDOWN_GRACE_MS = 2_000;
 
 /**
  * What openSavedFile hands to Windows. A saved file is opened with whatever program is
@@ -163,6 +173,7 @@ export class AppController implements ApiHandlers {
   private readonly store: LocalStore;
   private readonly desktop: Desktop;
   private readonly git: GitLayer;
+  private readonly shutdownGraceMs: number;
   /**
    * One git job at a time in the repository folder. A RepoService queues its own methods,
    * but connecting and (re-)opening happen outside any service, and a new service must
@@ -182,6 +193,7 @@ export class AppController implements ApiHandlers {
     this.store = options.store;
     this.desktop = options.desktop;
     this.git = options.git;
+    this.shutdownGraceMs = options.shutdownGraceMs ?? SHUTDOWN_GRACE_MS;
   }
 
   /** Resolves when no git or settings work is in flight (never rejects). Awaited before the app quits. */
@@ -194,13 +206,26 @@ export class AppController implements ApiHandlers {
   }
 
   /**
-   * For the moment the last window is closed: a check for updates that is still waiting for
-   * the server is ended (nobody is left to hear its answer), everything else is allowed to
-   * finish. Resolves when nothing is in flight any more (never rejects).
+   * For the moment the last window is closed. Whatever is in flight gets a moment to finish
+   * by itself (a check for updates that is simply at work is done within that moment, and
+   * ending git by force is never free). A check that is still waiting for the server after
+   * that is ended: nobody is left to hear its answer, and the closed app must not stay alive
+   * for as long as git keeps waiting. Everything else — a save, an edit that is being
+   * written, the settings — is always allowed to finish.
+   * Resolves when nothing is in flight any more (never rejects).
    */
   async shutdown(): Promise<void> {
-    this.service?.stopFetch();
-    await this.idle();
+    const finished = this.idle();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const graceOver = new Promise<'still busy'>((resolve) => {
+      timer = setTimeout(() => resolve('still busy'), this.shutdownGraceMs);
+    });
+    const first = await Promise.race([finished.then(() => 'idle' as const), graceOver]);
+    clearTimeout(timer);
+    if (first === 'still busy') {
+      this.service?.stopFetch();
+      await finished;
+    }
   }
 
   // ── start-up and local settings ──

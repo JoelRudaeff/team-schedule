@@ -3,8 +3,8 @@
  * request #1, neither of which could be seen without a window):
  *
  *  - closed while a check for updates is waiting for a server that does not answer, the app
- *    ends at once — so it can be started again straight away instead of doing nothing until
- *    git gives up;
+ *    ends within seconds (it gives the check a moment, then ends it) — so it can be started
+ *    again straight away instead of doing nothing until git gives up;
  *  - the Save question that comes back after an out-of-date overview still holds the note
  *    that was typed for that save.
  */
@@ -54,7 +54,7 @@ function endWithChildren(pid: number | undefined): void {
   }
 }
 
-test('closed while a check for updates waits for a server that does not answer, the app ends at once and starts again', async () => {
+test('closed while a check for updates waits for a server that does not answer, the app ends within seconds and starts again', async () => {
   let dana = await launch(team, 'dana', { lang: 'en' });
   await connect(dana.page, team, 'Dana Levi', 'dana@example.com');
   await dana.page.getByTestId('setup-create').click();

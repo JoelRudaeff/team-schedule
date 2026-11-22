@@ -2,7 +2,7 @@
  * Git sequences that an independent review of version 1.0.0 found broken. Each test pins
  * the corrected behaviour against real temporary repositories.
  */
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -263,6 +263,191 @@ describe('a lock file that a dead git left behind', () => {
     const remote = (await yossi.loadRemote())!;
     expect((await yossi.applyUpdate(remote.files, remote.sha)).ok).toBe(true);
     expect((await yossi.status()).behind).toBe(0);
+  });
+});
+
+// ───────────────────────────── lock files in the branches ─────────────────────────────
+
+describe('lock files that a git which was ended by force left behind in the branches', () => {
+  let box: Sandbox;
+  let dana: RepoService;
+  let lock = '';
+  let round = 0;
+
+  beforeAll(async () => {
+    box = await createSandbox();
+    dana = (await box.connect('dana', DANA)).service;
+    ok(await dana.createSchedule(FIRST, 'Create schedule'));
+    lock = join(dana.dir, '.git', 'refs', 'remotes', 'origin', `${dana.branch}.lock`);
+  });
+  afterAll(() => box.cleanup());
+
+  /** A new commit on the team's branch, made on the "server" itself. */
+  async function teamCommits(): Promise<string> {
+    const head = (await box.raw(box.remote, 'rev-parse', `refs/heads/${dana.branch}`)).stdout.trim();
+    const tree = (await box.raw(box.remote, 'rev-parse', `${head}^{tree}`)).stdout.trim();
+    const sha = (
+      await box.git.run(['-c', 'user.name=Team', '-c', 'user.email=team@example.com', 'commit-tree', tree, '-p', head, '-m', `team commit ${++round}`], { cwd: box.remote })
+    ).stdout.trim();
+    await box.raw(box.remote, 'update-ref', `refs/heads/${dana.branch}`, sha);
+    return sha;
+  }
+
+  /** A lock file as a git that died `ageMs` ago would have left it. */
+  async function leftBehind(path: string, ageMs = 60_000): Promise<void> {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, '');
+    const then = new Date(Date.now() - ageMs);
+    await utimes(path, then, then);
+  }
+
+  async function locksIn(folder: string): Promise<string[]> {
+    const entries = await readdir(folder, { recursive: true });
+    return entries.filter((name) => name.endsWith('.lock'));
+  }
+
+  it('without help git refuses every check from then on (this is what the app must not pass on to the user)', async () => {
+    await teamCommits();
+    await leftBehind(lock);
+    const error = await expectGitError(box.raw(dana.dir, 'fetch', '--prune', 'origin'));
+    expect(error.detail).toMatch(/Unable to create '.*\.lock': File exists/);
+    await rm(lock);
+    await box.raw(dana.dir, 'fetch', '--prune', 'origin');
+  });
+
+  it('the next check clears the lock on the team branch and brings the team\'s commit', async () => {
+    const sha = await teamCommits();
+    await leftBehind(lock);
+
+    const status = await dana.fetch(false);
+
+    expect(status.fetchError).toBeNull();
+    expect(status.remoteSha).toBe(sha);
+    expect(status.behind).toBeGreaterThan(0);
+    expect(await locksIn(join(dana.dir, '.git', 'refs'))).toEqual([]);
+    expect((await dana.applyUpdate(FIRST, sha)).ok).toBe(true);
+    expect((await dana.status()).behind).toBe(0);
+  });
+
+  it('a save whose first step (a check) meets such a lock gets past it: it sees that the team was faster', async () => {
+    const seen = (await dana.status()).remoteSha;
+    const sha = await teamCommits();
+    await leftBehind(lock);
+
+    const result = await dana.publish({ ...FIRST, [WEEK_FILE]: weekText('mine', [E1]) }, 'Save', seen);
+
+    expect(result).toMatchObject({ ok: false, reason: 'remote-changed' });
+    expect(result.status.fetchError).toBeNull();
+    expect(result.status.remoteSha).toBe(sha);
+    expect(await locksIn(join(dana.dir, '.git', 'refs'))).toEqual([]);
+    expect((await dana.applyUpdate(FIRST, sha)).ok).toBe(true);
+  });
+
+  it('a save that meets the lock only when git records what it has sent still goes out, and is counted as saved', async () => {
+    // Nothing new on the server, so the save's own check has no reason to touch the branch …
+    const tip = (await dana.status()).remoteSha;
+    expect((await dana.status()).behind).toBe(0);
+    // … and the lock is in the way only at the very end, when git notes down the commit it pushed.
+    await leftBehind(lock);
+    const files = { ...FIRST, [WEEK_FILE]: weekText('saved past a lock', [E1]) };
+
+    const result = await dana.publish(files, 'Save', tip);
+
+    ok(result);
+    expect(result.commitSha).not.toBeNull();
+    expect((await box.raw(box.remote, 'show', `${dana.branch}:${WEEK_FILE}`)).stdout).toContain('saved past a lock');
+    // The team has it, so nothing counts as unpublished here.
+    expect(result.status).toMatchObject({ headSha: result.commitSha, remoteSha: result.commitSha, ahead: 0, behind: 0 });
+    expect(await locksIn(join(dana.dir, '.git', 'refs'))).toEqual([]);
+    // For the tests below the files are as the team has them again.
+    ok(await dana.publish(FIRST, 'Back', result.commitSha));
+  });
+
+  it('a git that died in the middle of a large update left a lock per branch: all of them go, and the one of packed-refs', async () => {
+    await teamCommits();
+    const origin = join(dana.dir, '.git', 'refs', 'remotes', 'origin');
+    for (let i = 0; i < 40; i++) await leftBehind(join(origin, 'extra', `r${i % 4}`, `b${i}.lock`));
+    await leftBehind(join(dana.dir, '.git', 'packed-refs.lock'));
+    await leftBehind(lock);
+
+    const status = await dana.fetch(false);
+
+    expect(status.fetchError).toBeNull();
+    expect(await locksIn(join(dana.dir, '.git', 'refs'))).toEqual([]);
+    expect(await readdir(join(dana.dir, '.git'))).not.toContain('packed-refs.lock');
+  });
+
+  it('a branch that was removed on the server is still removed here when the lock of packed-refs was left behind', async () => {
+    const sha = (await box.raw(box.remote, 'rev-parse', `refs/heads/${dana.branch}`)).stdout.trim();
+    await box.raw(box.remote, 'update-ref', 'refs/heads/short-lived', sha);
+    expect((await dana.fetch(false)).fetchError).toBeNull();
+    // Packed, so that removing it means rewriting packed-refs.
+    await box.raw(dana.dir, 'pack-refs', '--all');
+    await box.raw(box.remote, 'update-ref', '-d', 'refs/heads/short-lived');
+    await leftBehind(join(dana.dir, '.git', 'packed-refs.lock'));
+
+    const status = await dana.fetch(false);
+
+    expect(status.fetchError).toBeNull();
+    const left = (await box.raw(dana.dir, 'for-each-ref', '--format=%(refname)', 'refs/remotes/origin')).stdout;
+    expect(left).not.toContain('short-lived');
+    expect(await readdir(join(dana.dir, '.git'))).not.toContain('packed-refs.lock');
+  });
+
+  it('a lock that was made a moment ago gets its moment: the check waits about two seconds, then clears it', async () => {
+    const sha = await teamCommits();
+    await leftBehind(lock, 0);
+    const started = Date.now();
+
+    const status = await dana.fetch(false);
+
+    expect(status.fetchError).toBeNull();
+    expect(status.remoteSha).toBe(sha);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1500);
+  });
+
+  it('a lock that somebody keeps renewing belongs to a git that is at work: it is left alone, and the check says what git said', async () => {
+    await teamCommits();
+    await leftBehind(lock, 0);
+    // Somebody's git "holds" the lock: it is never older than a moment.
+    const holder = setInterval(() => {
+      const now = new Date();
+      void utimes(lock, now, now).catch(() => undefined);
+    }, 100);
+    try {
+      const status = await dana.fetch(false);
+
+      expect(status.fetchError?.code).toBe('unknown');
+      expect(status.fetchError?.detail).toMatch(/File exists/);
+      expect(await locksIn(join(dana.dir, '.git', 'refs'))).toHaveLength(1);
+    } finally {
+      clearInterval(holder);
+      await rm(lock, { force: true });
+    }
+    // Once that git is done, everything works as before.
+    expect((await dana.fetch(false)).fetchError).toBeNull();
+  });
+
+  it('connecting again — what a user tries when nothing works — gets past such a lock too', async () => {
+    await teamCommits();
+    await leftBehind(lock);
+
+    const again = await box.connect('dana', DANA);
+
+    expect(again.hasSchedule).toBe(true);
+    expect(await locksIn(join(dana.dir, '.git', 'refs'))).toEqual([]);
+  });
+
+  it('a file that merely looks like a lock outside the repository\'s own .git folder is never touched', async () => {
+    await teamCommits();
+    const stranger = join(dana.dir, 'weeks', 'notes.lock');
+    await leftBehind(stranger);
+    await leftBehind(lock);
+
+    expect((await dana.fetch(false)).fetchError).toBeNull();
+
+    expect(await readdir(join(dana.dir, 'weeks'))).toContain('notes.lock');
+    await rm(stranger);
   });
 });
 
@@ -588,6 +773,45 @@ describe('the app is closed while a check for updates waits for a server that do
     expect((await first).fetchError?.code).toBe('timeout');
     expect((await second).fetchError?.code).toBe('timeout');
     expect(server.connections()).toBe(before + 1);
+    await fresh.idle();
+  });
+
+  it('a check that is ended by force leaves no lock on the branches behind, whatever it was writing in that moment', async () => {
+    const fresh = (await RepoService.open(box.git, dir, server.url, service.branch))!;
+    const before = server.connections();
+    const check = fresh.fetch(false);
+    await server.waitForConnections(before + 1);
+    // What a git leaves that is ended while it writes branches. (Put there by hand: this
+    // server never lets git get that far, and a real one only for a few milliseconds.)
+    const origin = join(dir, '.git', 'refs', 'remotes', 'origin');
+    await mkdir(join(origin, 'extra'), { recursive: true });
+    for (const name of [`${service.branch}.lock`, join('extra', 'a.lock'), join('extra', 'b.lock')]) await writeFile(join(origin, name), '');
+    await writeFile(join(dir, '.git', 'packed-refs.lock'), '');
+    const stoppedAt = Date.now();
+
+    fresh.stopFetch();
+    const status = await check;
+
+    expect(status.fetchError?.code).toBe('timeout');
+    const left = (await readdir(join(dir, '.git', 'refs'), { recursive: true })).filter((name) => name.endsWith('.lock'));
+    expect(left).toEqual([]);
+    expect(await readdir(join(dir, '.git'))).not.toContain('packed-refs.lock');
+    // These locks were brand new, so they were given their moment first (about two seconds).
+    expect(Date.now() - stoppedAt).toBeGreaterThanOrEqual(1500);
+    await fresh.idle();
+  });
+
+  it('with no lock left behind, ending a check costs no extra time', async () => {
+    const fresh = (await RepoService.open(box.git, dir, server.url, service.branch))!;
+    const before = server.connections();
+    const check = fresh.fetch(false);
+    await server.waitForConnections(before + 1);
+    const stoppedAt = Date.now();
+
+    fresh.stopFetch();
+    await check;
+
+    expect(Date.now() - stoppedAt).toBeLessThan(1500);
     await fresh.idle();
   });
 });

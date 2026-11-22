@@ -36,8 +36,9 @@
  * A check for updates that is still waiting when the app is closed is not sat out: it is
  * ended on the spot (stopFetch). A save that is under way always runs to its own end.
  */
+import type { Dirent } from 'node:fs';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type {
   BlameInfo,
@@ -68,6 +69,11 @@ const MAX_BLAME_COMMITS = 400;
 const SYNCED_REF = 'refs/team-schedule/synced';
 /** A lock file is only removed once it is this old: a git that is really at work is done sooner. */
 const STALE_LOCK_MS = 2_000;
+/**
+ * What git says when a lock file is in its way. The group is the lock file as a path inside
+ * the repository's `.git` folder (`index.lock`, `refs/remotes/origin/main.lock`, …).
+ */
+const LOCK_REFUSAL = /Unable to create '.*[\\/]\.git[\\/]([^\r\n]+?\.lock)': File exists/g;
 const GITATTRIBUTES_PATH = '.gitattributes';
 const GITATTRIBUTES_CONTENT = '*.json text eol=lf\n';
 
@@ -243,6 +249,104 @@ async function originOf(git: GitRunner, dir: string): Promise<string | null> {
   }
 }
 
+/** Every `*.lock` file below `folder`. Under `.git/refs` these are git's own: no branch name may end like that. */
+async function lockFilesBelow(folder: string): Promise<string[]> {
+  const found: string[] = [];
+  let entries: Dirent[];
+  try {
+    entries = await readdir(folder, { withFileTypes: true });
+  } catch {
+    return found;
+  }
+  for (const entry of entries) {
+    const path = join(folder, entry.name);
+    if (entry.isDirectory()) found.push(...(await lockFilesBelow(path)));
+    else if (entry.name.endsWith('.lock')) found.push(path);
+  }
+  return found;
+}
+
+/** The lock files `failure` (the text of a refused git command) complains about, inside the clone's own `.git` folder. */
+function locksNamedIn(dir: string, failure: string): string[] {
+  const locks: string[] = [];
+  for (const match of failure.matchAll(LOCK_REFUSAL)) {
+    const parts = match[1].split(/[\\/]/);
+    // The path is read from git's message: only a plain path inside .git is taken from it.
+    if (parts.some((part) => part === '' || part === '.' || part === '..' || part.includes(':'))) continue;
+    locks.push(join(dir, '.git', ...parts));
+  }
+  return locks;
+}
+
+/** Every lock file a git may leave behind when it dies while it is writing branches. */
+async function branchLocks(dir: string): Promise<string[]> {
+  return [join(dir, '.git', 'packed-refs.lock'), ...(await lockFilesBelow(join(dir, '.git', 'refs')))];
+}
+
+function isBranchLock(dir: string, path: string): boolean {
+  return path === join(dir, '.git', 'packed-refs.lock') || path.startsWith(join(dir, '.git', 'refs') + sep);
+}
+
+async function ageOf(path: string): Promise<number | null> {
+  try {
+    return Date.now() - (await stat(path)).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Removes those of `locks` that a dead git left behind.
+ *
+ * This app runs its own git work strictly one after another, and a git that is really
+ * working holds a lock for a moment only. So every lock gets that moment (STALE_LOCK_MS);
+ * what is still there afterwards, and that old, belongs to a git that died — a crash, a
+ * power cut, a process that was ended on its time limit or because the app was closed. A
+ * lock that is gone by then, or new, is somebody's git at work and is left alone.
+ * Removing is best effort: where a file cannot be removed, git simply says so again.
+ */
+async function removeStaleLocks(locks: readonly string[]): Promise<void> {
+  const ages = (await Promise.all(locks.map(ageOf))).filter((age): age is number => age !== null);
+  if (ages.length === 0) return;
+  const youngest = Math.min(...ages);
+  if (youngest < STALE_LOCK_MS) await sleep(STALE_LOCK_MS - youngest);
+  for (const path of new Set(locks)) {
+    const age = await ageOf(path);
+    if (age !== null && age >= STALE_LOCK_MS) await rm(path, { force: true }).catch(() => undefined);
+  }
+}
+
+/**
+ * `git <args>` in the clone `dir`, with the two repairs that keep a lock file from making
+ * the clone unusable until somebody deletes a file deep inside the application data by hand:
+ *
+ *  - A command that is refused because of a lock file is run once more after the locks it
+ *    names were dealt with (removeStaleLocks). A git that died while it was writing branches
+ *    leaves one lock per branch and names only the first it runs into, so then every lock of
+ *    the branches is looked at.
+ *  - A command that was ended by force (its time limit, or the app closing) may have been in
+ *    the middle of writing branches: the locks it left are cleared on the spot. Otherwise the
+ *    next check for updates could spend its whole time limit on them — git waits a little at
+ *    each one — without ever getting far enough to say what is wrong.
+ *
+ * Nothing outside the clone's own `.git` folder is ever touched.
+ */
+async function runInClone(git: GitRunner, dir: string, args: readonly string[], options: GitRunOptions = {}): Promise<GitResult> {
+  try {
+    return await git.run(args, { ...options, cwd: dir });
+  } catch (error) {
+    if (!(error instanceof GitError)) throw error;
+    if (error.code === 'timeout') {
+      await removeStaleLocks(await branchLocks(dir));
+      throw error;
+    }
+    const named = locksNamedIn(dir, error.detail);
+    if (named.length === 0) throw error;
+    await removeStaleLocks(named.some((path) => isBranchLock(dir, path)) ? [...named, ...(await branchLocks(dir))] : named);
+    return git.run(args, { ...options, cwd: dir });
+  }
+}
+
 function unexpectedOutput(what: string, text: string): Error {
   return new Error(`Unexpected output of ${what}: ${text.slice(0, 200)}`);
 }
@@ -354,7 +458,7 @@ export class RepoService {
     }
 
     if (reused) {
-      await git.run(['fetch', '--prune', 'origin'], { cwd: dir, timeoutMs: INTERACTIVE_NETWORK_TIMEOUT_MS, interactive: true });
+      await runInClone(git, dir, ['fetch', '--prune', 'origin'], { timeoutMs: INTERACTIVE_NETWORK_TIMEOUT_MS, interactive: true });
     } else {
       await mkdir(dirname(dir), { recursive: true });
       try {
@@ -368,8 +472,7 @@ export class RepoService {
       }
     }
 
-    const local = (args: readonly string[], options: GitRunOptions = {}): Promise<GitResult> =>
-      git.run(args, { ...options, cwd: dir });
+    const local = (args: readonly string[], options: GitRunOptions = {}): Promise<GitResult> => runInClone(git, dir, args, options);
     for (const [key, value] of LOCAL_CONFIG) await local(['config', key, value]);
     await local(['config', 'user.name', params.userName]);
     await local(['config', 'user.email', params.userEmail]);
@@ -478,6 +581,11 @@ export class RepoService {
    *
    * Only the check is ended. A save (publish, createSchedule) that is under way is not
    * touched: the user asked for it and confirmed it, so it runs to its own end.
+   *
+   * Ending git by force is never free: a git that is stopped in the very moment it writes a
+   * branch leaves its lock file behind. So this is for a check that WAITS (the caller gives a
+   * check that is simply at work a moment to finish, see AppController.shutdown), and a
+   * lock that is left behind all the same is cleared at once, or by the next command (runInClone).
    */
   stopFetch(): void {
     this.closing = true;
@@ -764,38 +872,9 @@ export class RepoService {
     return result;
   }
 
+  /** Every git command of the service; a lock file that a dead git left behind does not stop it (see runInClone). */
   private run(args: readonly string[], options: GitRunOptions = {}): Promise<GitResult> {
-    return this.git.run(args, { ...options, cwd: this.dir });
-  }
-
-  /**
-   * A local command that needs git's index. When it is refused because of a lock file, the
-   * lock was left behind by a git that died (a crash, a power cut, a process stopped on a
-   * time limit) — this app runs its own git work strictly one after another. The lock is
-   * removed and the command tried once more, instead of failing until somebody deletes a
-   * file deep inside the application data by hand.
-   */
-  private async runIndex(args: readonly string[], options: GitRunOptions = {}): Promise<GitResult> {
-    try {
-      return await this.run(args, options);
-    } catch (error) {
-      if (!(error instanceof GitError) || !/index\.lock/.test(error.detail)) throw error;
-      await this.clearStaleLock();
-      return this.run(args, options);
-    }
-  }
-
-  private async clearStaleLock(): Promise<void> {
-    const lock = join(this.dir, '.git', 'index.lock');
-    let age: number;
-    try {
-      age = Date.now() - (await stat(lock)).mtimeMs;
-    } catch {
-      return; // Gone by itself: somebody else's git was at work for a moment.
-    }
-    // A git that is really working holds the lock for a moment only. It gets that moment.
-    if (age < STALE_LOCK_MS) await sleep(STALE_LOCK_MS - age);
-    await rm(lock, { force: true });
+    return runInClone(this.git, this.dir, args, options);
   }
 
   private async revParse(ref: string): Promise<string | null> {
@@ -1014,7 +1093,7 @@ export class RepoService {
 
   /** Moves the branch and the index to `commit` without touching the data files in the working folder. */
   private async moveBranchTo(commit: string): Promise<void> {
-    await this.runIndex(['reset', '--mixed', '--quiet', commit]);
+    await this.run(['reset', '--mixed', '--quiet', commit]);
     try {
       // Files the app does not manage (a README …) should simply follow the team's version.
       await this.run(['checkout', '--quiet', '--', '.', `:(exclude)${CONFIG_PATH}`, `:(exclude)${WEEKS_DIR}`]);
@@ -1037,8 +1116,8 @@ export class RepoService {
     // (a hook that refused, a signing prompt that was cancelled) leaves its files staged; left
     // there, they would go out with the NEXT save although the user has discarded them since,
     // or make that save fail on a file that is in neither place any more.
-    if (headSha !== null) await this.runIndex(['reset', '--mixed', '--quiet', headSha]);
-    else await this.runIndex(['read-tree', '--empty']);
+    if (headSha !== null) await this.run(['reset', '--mixed', '--quiet', headSha]);
+    else await this.run(['read-tree', '--empty']);
     const committed = headSha === null ? {} : await this.readFilesAt(headSha);
     const working = await this.readWorkingFiles();
     const changed = [...new Set([...Object.keys(committed), ...Object.keys(working)])].filter(
@@ -1046,12 +1125,12 @@ export class RepoService {
     );
     const paths = [...new Set([...changed, ...extra])];
     if (paths.length === 0) return;
-    await this.runIndex(['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: `${paths.join(NUL)}${NUL}` });
+    await this.run(['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: `${paths.join(NUL)}${NUL}` });
   }
 
   /** Takes back the commit made by a publish that did not reach the team; the files stay as they are. */
   private async undoCommit(previousTip: string | null): Promise<void> {
-    if (previousTip !== null) await this.runIndex(['reset', '--mixed', '--quiet', previousTip]);
+    if (previousTip !== null) await this.run(['reset', '--mixed', '--quiet', previousTip]);
     else await this.run(['update-ref', '-d', 'HEAD']);
   }
 
@@ -1080,7 +1159,7 @@ export class RepoService {
       const staged = await this.run(['diff', '--cached', '--quiet'], { okExitCodes: [1] });
       if (staged.code === 1) {
         // The message goes through stdin: no length limit and no argument-encoding surprises with Hebrew.
-        await this.runIndex(['commit', '--quiet', '--file=-'], { input: message });
+        await this.run(['commit', '--quiet', '--file=-'], { input: message });
         commitSha = await this.revParse('HEAD');
       }
     } catch (error) {
@@ -1116,6 +1195,17 @@ export class RepoService {
         timedOut: false,
       });
       return { ok: false, reason: 'error', error, status: after };
+    }
+    // git notes down what it has pushed in its own copy of the team's branch. Where it could
+    // not write that (a lock file a dead git left behind), it only warns — and the save would
+    // be counted as unpublished although the team has it.
+    if ((await this.revParse(this.remoteRef)) !== newTip) {
+      try {
+        await this.run(['update-ref', this.remoteRef, newTip]);
+      } catch (error) {
+        // The save itself went out; the next check for updates puts the count right.
+        if (!(error instanceof GitError)) throw error;
+      }
     }
     this.lastFetchAt = Date.now();
     return { ok: true, status: await this.statusNow(), commitSha };

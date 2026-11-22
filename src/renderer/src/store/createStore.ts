@@ -564,6 +564,8 @@ export function createAppStore(api: ScheduleApi, options: StoreOptions = {}): Ap
 
   function resetRepositoryView(): void {
     // An offer to undo something in the schedule that is being left makes no sense any more.
+    // (Connecting already clears such messages when its busy overlay comes up, and the undo
+    // steps are emptied below; this keeps the offer and the steps in step whoever calls.)
     retireUndoToast();
     passthrough = {};
     baseRaw = {};

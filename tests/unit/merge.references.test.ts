@@ -578,3 +578,82 @@ describe('the deleting side deleted several entries that share a lesson, and one
     expect(countEntityUsage(applied.dataset, 'teacher', 'T')).toBe(5);
   });
 });
+
+// Found by the third review of pull request #1: the rule for several deletions compared with
+// "what the deleting side's lists still have", and so stumbled over a name that no list has.
+
+describe('a lesson that also names an entry which is in no list (a file edited by hand, or left by an old version)', () => {
+  /** Dana (T) teaches three lessons that also name "G", an id no list knows. Vered (V) is in the list. */
+  function baseWithStray(teacherIds: string[] = ['G', 'T']): Dataset {
+    let dataset = emptyDataset();
+    dataset = addEntity(dataset, 'teacher', { id: 'T', name: 'Dana' });
+    dataset = addEntity(dataset, 'teacher', { id: 'V', name: 'Vered' });
+    for (let i = 0; i < 3; i++) dataset = upsertEvent(dataset, WEEK, ev(`e${i}`, i, { teacherIds }));
+    return dataset;
+  }
+
+  it('such a schedule can be written and read back as it is', () => {
+    const base = baseWithStray();
+    const back = filesToDataset(datasetToFiles(base));
+    expect(back.problems).toEqual([]);
+    expect(findEvent(back.dataset, WEEK, 'e0')?.teacherIds).toEqual(['G', 'T']);
+  });
+
+  it('I delete Dana, the team renames her and its version is kept: she keeps her three lessons, the stray name is left alone', () => {
+    const base = baseWithStray();
+    const mine = removeEntity(base, 'teacher', 'T');
+    const theirs = updateEntity(base, 'teacher', 'T', { name: 'Dana Levi' });
+    const { applied } = merge(base, mine, theirs, 'theirs');
+
+    expect(findEvent(mine, WEEK, 'e0')?.teacherIds).toEqual(['G']);
+    expect(countEntityUsage(applied.dataset, 'teacher', 'T')).toBe(3);
+    expect(findEvent(applied.dataset, WEEK, 'e0')?.teacherIds).toEqual(['G', 'T']);
+    // Nothing of this is left for me to publish.
+    expect(applied.dataset).toEqual(theirs);
+  });
+
+  it('the mirror: the team deletes her, I rename her and my version wins', () => {
+    const base = baseWithStray();
+    const theirs = removeEntity(base, 'teacher', 'T');
+    const mine = updateEntity(base, 'teacher', 'T', { name: 'Dana Levi' });
+    const { applied } = merge(base, mine, theirs, 'mine');
+
+    expect(countEntityUsage(applied.dataset, 'teacher', 'T')).toBe(3);
+    expect(findEvent(applied.dataset, WEEK, 'e0')?.teacherIds).toEqual(['G', 'T']);
+  });
+
+  it('together with a second deletion: Dana comes back, Vered stays deleted, the stray name stays', () => {
+    const base = baseWithStray(['G', 'T', 'V']);
+    const mine = removeEntity(removeEntity(base, 'teacher', 'T'), 'teacher', 'V');
+    const theirs = updateEntity(base, 'teacher', 'T', { name: 'Dana Levi' });
+    const { applied } = merge(base, mine, theirs, 'theirs');
+
+    expect(findEvent(applied.dataset, WEEK, 'e0')?.teacherIds).toEqual(['G', 'T']);
+    expect(countEntityUsage(applied.dataset, 'teacher', 'T')).toBe(3);
+    expect(findEntity(applied.dataset.config, 'teacher', 'V')).toBeUndefined();
+  });
+
+  it('a stray name the deleting side took off by hand stays off; Dana still comes back', () => {
+    const base = baseWithStray();
+    // I clear the teachers of e0 by hand (which drops the stray name), then delete Dana.
+    const mine = removeEntity(upsertEvent(base, WEEK, ev('e0', 0, { teacherIds: ['T'] })), 'teacher', 'T');
+    const theirs = updateEntity(base, 'teacher', 'T', { name: 'Dana Levi' });
+    const { applied } = merge(base, mine, theirs, 'theirs');
+
+    expect(findEvent(mine, WEEK, 'e0')?.teacherIds).toEqual([]);
+    expect(findEvent(applied.dataset, WEEK, 'e0')?.teacherIds).toEqual(['T']);
+    expect(findEvent(applied.dataset, WEEK, 'e1')?.teacherIds).toEqual(['G', 'T']);
+    expect(countEntityUsage(applied.dataset, 'teacher', 'T')).toBe(3);
+  });
+
+  it('a kept-aside lesson of mine gets Dana back as well, next to the stray name', () => {
+    const base = baseWithStray();
+    const mine = upsertEvent(removeEntity(base, 'teacher', 'T'), WEEK, ev('e0', 0, { teacherIds: ['G'], title: 'My title' }));
+    const theirs = upsertEvent(updateEntity(base, 'teacher', 'T', { name: 'Dana Levi' }), WEEK, ev('e0', 0, { teacherIds: ['G', 'T'], title: 'Their title' }));
+    const { applied } = merge(base, mine, theirs, 'aside');
+    const item = applied.aside.find((kept) => kept.key === `event:${WEEK}:e0`);
+    if (!item) throw new Error('the event was not kept aside');
+
+    expect(item.mine).toMatchObject({ title: 'My title', teacherIds: ['G', 'T'] });
+  });
+});
