@@ -449,6 +449,80 @@ describe('lock files that a git which was ended by force left behind in the bran
     expect(await readdir(join(dana.dir, 'weeks'))).toContain('notes.lock');
     await rm(stranger);
   });
+
+  // The cases below were found by the fourth review of pull request #1.
+
+  it('a git that died while it moved the branch left several locks at once (HEAD, the branch, the index): the first update afterwards goes through', async () => {
+    const sha = await teamCommits();
+    expect((await dana.fetch(false)).fetchError).toBeNull();
+    const gitDir = join(dana.dir, '.git');
+    // git names only the first lock it runs into; the single retry must not meet the next one.
+    await leftBehind(join(gitDir, 'HEAD.lock'));
+    await leftBehind(join(gitDir, 'refs', 'heads', `${dana.branch}.lock`));
+    await leftBehind(join(gitDir, 'index.lock'));
+
+    const result = await dana.applyUpdate(FIRST, sha);
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toMatchObject({ headSha: sha, behind: 0 });
+    expect(await locksIn(gitDir)).toEqual([]);
+  });
+
+  it('the same for a save', async () => {
+    const tip = (await dana.status()).remoteSha;
+    const gitDir = join(dana.dir, '.git');
+    await leftBehind(join(gitDir, 'HEAD.lock'));
+    await leftBehind(join(gitDir, 'refs', 'heads', `${dana.branch}.lock`));
+    await leftBehind(join(gitDir, 'index.lock'));
+
+    const result = await dana.publish({ ...FIRST, [WEEK_FILE]: weekText('saved past three locks', [E1]) }, 'Save', tip);
+
+    ok(result);
+    expect(result.commitSha).not.toBeNull();
+    expect(result.status).toMatchObject({ ahead: 0, behind: 0 });
+    expect(await locksIn(gitDir)).toEqual([]);
+    ok(await dana.publish(FIRST, 'Back', result.commitSha));
+  });
+
+  it('a lock whose time lies in the future (the clock was set back since) is not waited for longer than the usual moment', async () => {
+    const sha = await teamCommits();
+    await writeFile(lock, '');
+    const inAnHour = new Date(Date.now() + 3_600_000);
+    await utimes(lock, inAnHour, inAnHour);
+    const started = Date.now();
+
+    const status = await dana.fetch(false);
+
+    expect(status.fetchError).toBeNull();
+    expect(status.remoteSha).toBe(sha);
+    expect(Date.now() - started).toBeLessThan(20_000);
+    expect(await locksIn(join(dana.dir, '.git', 'refs'))).toEqual([]);
+    expect((await dana.applyUpdate(FIRST, sha)).ok).toBe(true);
+  });
+
+  it('a lock on the clone\'s configuration (a git that died while connecting) does not stop a new name from being stored', async () => {
+    const configLock = join(dana.dir, '.git', 'config.lock');
+    await leftBehind(configLock);
+    // What git itself says about it, in words unlike those for every other lock.
+    const refused = await expectGitError(box.raw(dana.dir, 'config', 'user.name', 'Somebody'));
+    expect(refused.detail).toMatch(/could not lock config file .*config: File exists/);
+
+    await dana.setIdentity('Dana L.', 'dana.l@example.com');
+
+    expect((await box.raw(dana.dir, 'config', 'user.name')).stdout.trim()).toBe('Dana L.');
+    expect((await box.raw(dana.dir, 'config', 'user.email')).stdout.trim()).toBe('dana.l@example.com');
+    expect(await readdir(join(dana.dir, '.git'))).not.toContain('config.lock');
+  });
+
+  it('nor connecting again', async () => {
+    await leftBehind(join(dana.dir, '.git', 'config.lock'));
+
+    const again = await box.connect('dana', DANA);
+
+    expect(again.hasSchedule).toBe(true);
+    expect((await box.raw(dana.dir, 'config', 'user.name')).stdout.trim()).toBe(DANA.name);
+    expect(await readdir(join(dana.dir, '.git'))).not.toContain('config.lock');
+  });
 });
 
 // ───────────────────────────── a mistyped branch ─────────────────────────────

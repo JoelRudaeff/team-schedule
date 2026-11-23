@@ -188,7 +188,7 @@ Node.js 22.12 or newer and Git are required. With Node installed normally, use p
 npm install            # once; if npm skipped Electron's download: node node_modules\electron\install.js
 npm run dev            # run with hot reload
 npm run typecheck
-npm test               # ~3,580 unit, git-integration and store tests (the integration tests need git)
+npm test               # ~3,590 unit, git-integration and store tests (the integration tests need git)
 npm run build          # production build into out\
 npm run test:e2e       # end-to-end tests: Playwright drives the built app (run the build first)
 npm run dist           # build + installer and portable exe into dist\
@@ -218,8 +218,9 @@ Design notes worth knowing before changing things:
 - **git is never left hanging, and never leaves the clone unusable.** Every command has a
   time limit; a check for updates that is still waiting two seconds after the window was
   closed is ended, so the app can be opened again at once (a save always runs to its end).
-  A git that is ended by force — or that died in a crash — can leave a lock file behind:
-  such a file is cleared on the spot or by the next command, never by the user.
+  A git that is ended by force — or that died in a crash — can leave lock files behind
+  (on the index, HEAD, the branches, `packed-refs`, the configuration): these are cleared on
+  the spot or by the next command, after a two-second wait that a git at work never needs.
 - **File contents are never decoded lossily.** A data file that is not UTF-8 crosses the
   bridge as its bytes (`RAW_BYTES_PREFIX`), is reported as unreadable, and is written back
   unchanged.

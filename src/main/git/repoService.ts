@@ -38,7 +38,7 @@
  */
 import type { Dirent } from 'node:fs';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, join, sep } from 'node:path';
+import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type {
   BlameInfo,
@@ -67,13 +67,15 @@ const MAX_INCOMING = 50;
 const MAX_BLAME_COMMITS = 400;
 /** The commit of the team's branch that this computer last agreed with (see statusNow). */
 const SYNCED_REF = 'refs/team-schedule/synced';
-/** A lock file is only removed once it is this old: a git that is really at work is done sooner. */
+/** The moment a lock file is given before it is taken for one a dead git left behind: a git that is really at work is done sooner. */
 const STALE_LOCK_MS = 2_000;
 /**
  * What git says when a lock file is in its way. The group is the lock file as a path inside
  * the repository's `.git` folder (`index.lock`, `refs/remotes/origin/main.lock`, …).
  */
 const LOCK_REFUSAL = /Unable to create '.*[\\/]\.git[\\/]([^\r\n]+?\.lock)': File exists/g;
+/** The same for the lock on the clone's configuration file, which git words differently. */
+const CONFIG_LOCK_REFUSAL = /could not lock config file (?:[^\r\n]*[\\/])?\.git[\\/]config: File exists/;
 const GITATTRIBUTES_PATH = '.gitattributes';
 const GITATTRIBUTES_CONTENT = '*.json text eol=lf\n';
 
@@ -275,21 +277,29 @@ function locksNamedIn(dir: string, failure: string): string[] {
     if (parts.some((part) => part === '' || part === '.' || part === '..' || part.includes(':'))) continue;
     locks.push(join(dir, '.git', ...parts));
   }
+  if (CONFIG_LOCK_REFUSAL.test(failure)) locks.push(join(dir, '.git', 'config.lock'));
   return locks;
 }
 
-/** Every lock file a git may leave behind when it dies while it is writing branches. */
-async function branchLocks(dir: string): Promise<string[]> {
-  return [join(dir, '.git', 'packed-refs.lock'), ...(await lockFilesBelow(join(dir, '.git', 'refs')))];
+/**
+ * Every lock file a git of this app can leave behind when it dies in the middle of its work:
+ * the index, HEAD, the configuration, packed-refs, and one per branch. A git that dies while
+ * it moves a branch leaves several of them at once (HEAD and the branch; during a commit the
+ * index as well; during a fetch one per branch), and the next git names only the first it
+ * runs into — so they are always looked at together.
+ */
+async function gitLocks(dir: string): Promise<string[]> {
+  const gitDir = join(dir, '.git');
+  return [
+    ...['index.lock', 'HEAD.lock', 'config.lock', 'packed-refs.lock'].map((name) => join(gitDir, name)),
+    ...(await lockFilesBelow(join(gitDir, 'refs'))),
+  ];
 }
 
-function isBranchLock(dir: string, path: string): boolean {
-  return path === join(dir, '.git', 'packed-refs.lock') || path.startsWith(join(dir, '.git', 'refs') + sep);
-}
-
-async function ageOf(path: string): Promise<number | null> {
+/** When the file was last written; null when it is not there. */
+async function writtenAt(path: string): Promise<number | null> {
   try {
-    return Date.now() - (await stat(path)).mtimeMs;
+    return (await stat(path)).mtimeMs;
   } catch {
     return null;
   }
@@ -299,20 +309,26 @@ async function ageOf(path: string): Promise<number | null> {
  * Removes those of `locks` that a dead git left behind.
  *
  * This app runs its own git work strictly one after another, and a git that is really
- * working holds a lock for a moment only. So every lock gets that moment (STALE_LOCK_MS);
- * what is still there afterwards, and that old, belongs to a git that died — a crash, a
- * power cut, a process that was ended on its time limit or because the app was closed. A
- * lock that is gone by then, or new, is somebody's git at work and is left alone.
+ * working holds a lock for a moment only. So every lock that is there gets that moment
+ * (STALE_LOCK_MS, counted from when it was written — and never more than that, whatever its
+ * time says: the clock may have been set back since). A lock that is then still the very
+ * same file, untouched, belongs to a git that died — a crash, a power cut, a process that
+ * was ended on its time limit or because the app was closed — and is removed. A lock that
+ * is gone by then, or was written anew, is somebody's git at work and is left alone.
  * Removing is best effort: where a file cannot be removed, git simply says so again.
  */
 async function removeStaleLocks(locks: readonly string[]): Promise<void> {
-  const ages = (await Promise.all(locks.map(ageOf))).filter((age): age is number => age !== null);
-  if (ages.length === 0) return;
-  const youngest = Math.min(...ages);
-  if (youngest < STALE_LOCK_MS) await sleep(STALE_LOCK_MS - youngest);
+  const seen = new Map<string, number>();
   for (const path of new Set(locks)) {
-    const age = await ageOf(path);
-    if (age !== null && age >= STALE_LOCK_MS) await rm(path, { force: true }).catch(() => undefined);
+    const written = await writtenAt(path);
+    if (written !== null) seen.set(path, written);
+  }
+  if (seen.size === 0) return;
+  const youngest = Date.now() - Math.max(...seen.values());
+  const wait = Math.min(STALE_LOCK_MS, STALE_LOCK_MS - youngest);
+  if (wait > 0) await sleep(wait);
+  for (const [path, written] of seen) {
+    if ((await writtenAt(path)) === written) await rm(path, { force: true }).catch(() => undefined);
   }
 }
 
@@ -320,13 +336,11 @@ async function removeStaleLocks(locks: readonly string[]): Promise<void> {
  * `git <args>` in the clone `dir`, with the two repairs that keep a lock file from making
  * the clone unusable until somebody deletes a file deep inside the application data by hand:
  *
- *  - A command that is refused because of a lock file is run once more after the locks it
- *    names were dealt with (removeStaleLocks). A git that died while it was writing branches
- *    leaves one lock per branch and names only the first it runs into, so then every lock of
- *    the branches is looked at.
+ *  - A command that is refused because of a lock file is run once more after the locks a
+ *    dead git left behind were removed (gitLocks, removeStaleLocks).
  *  - A command that was ended by force (its time limit, or the app closing) may have been in
- *    the middle of writing branches: the locks it left are cleared on the spot. Otherwise the
- *    next check for updates could spend its whole time limit on them — git waits a little at
+ *    the middle of writing: the locks it left are cleared on the spot. Otherwise the next
+ *    check for updates could spend its whole time limit on them — git waits a little at
  *    each one — without ever getting far enough to say what is wrong.
  *
  * Nothing outside the clone's own `.git` folder is ever touched.
@@ -336,13 +350,11 @@ async function runInClone(git: GitRunner, dir: string, args: readonly string[], 
     return await git.run(args, { ...options, cwd: dir });
   } catch (error) {
     if (!(error instanceof GitError)) throw error;
-    if (error.code === 'timeout') {
-      await removeStaleLocks(await branchLocks(dir));
-      throw error;
-    }
-    const named = locksNamedIn(dir, error.detail);
-    if (named.length === 0) throw error;
-    await removeStaleLocks(named.some((path) => isBranchLock(dir, path)) ? [...named, ...(await branchLocks(dir))] : named);
+    const endedByForce = error.code === 'timeout';
+    const named = endedByForce ? [] : locksNamedIn(dir, error.detail);
+    if (!endedByForce && named.length === 0) throw error;
+    await removeStaleLocks([...named, ...(await gitLocks(dir))]);
+    if (endedByForce) throw error;
     return git.run(args, { ...options, cwd: dir });
   }
 }
