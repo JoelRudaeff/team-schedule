@@ -549,12 +549,16 @@ describe('lock files that a git which was ended by force left behind in the bran
     expect(await locksIn(gitDir)).toEqual([]);
   });
 
-  /** A git that hangs in `command` and is ended on its time limit, as the runner reports that. */
-  function endedByForceIn(command: string, leaves: () => Promise<void> = async () => undefined): GitRunner {
+  /**
+   * A git that hangs in `command` (a subcommand, or whatever `command` says yes to) and is
+   * ended on its time limit, as the runner reports that. `leaves`: what it had locked by then.
+   */
+  function endedByForceIn(command: string | ((args: readonly string[]) => boolean), leaves: () => Promise<void> = async () => undefined): GitRunner {
+    const hangs = typeof command === 'string' ? (args: readonly string[]): boolean => args[0] === command : command;
     return {
       gitPath: box.git.gitPath,
       async run(args, options) {
-        if (args[0] !== command) return box.git.run(args, options);
+        if (!hangs(args)) return box.git.run(args, options);
         await leaves();
         throw new GitError({ code: 'timeout', message: 'git did not finish in time and was stopped', detail: '' }, null);
       },
@@ -596,6 +600,108 @@ describe('lock files that a git which was ended by force left behind in the bran
     const still = await locksIn(gitDir);
     expect(still).toHaveLength(4);
     for (const name of still) await rm(join(gitDir, name));
+  });
+
+  // The cases below were found by the review of pull request #2. (Every row of the two
+  // tables behind them is pinned in tests/unit/main.staleLocks.test.ts; here the rows a
+  // save, a check and the settings really go through, with real git around them.)
+
+  it('connecting to another branch gets through at the first try when a lock on that branch and one on HEAD were both left behind', async () => {
+    const tip = (await box.raw(box.remote, 'rev-parse', `refs/heads/${dana.branch}`)).stdout.trim();
+    await box.raw(box.remote, 'update-ref', 'refs/heads/other', tip);
+    const yossi = (await box.connect('yossi', YOSSI)).service;
+    const gitDir = join(yossi.dir, '.git');
+    // git creates the branch before it moves HEAD: it names the branch lock first, and the
+    // single retry must not then run into the one on HEAD.
+    await leftBehind(join(gitDir, 'refs', 'heads', 'other.lock'));
+    await leftBehind(join(gitDir, 'HEAD.lock'));
+
+    const again = await box.connect('yossi', YOSSI, 'other');
+
+    expect(again.service.branch).toBe('other');
+    expect(again.hasSchedule).toBe(true);
+    expect((await box.raw(yossi.dir, 'symbolic-ref', '--short', 'HEAD')).stdout.trim()).toBe('other');
+    expect(await locksIn(gitDir)).toEqual([]);
+  });
+
+  it('a commit that is ended on its time limit (a hook that hangs, a signing prompt nobody answers) clears the index, HEAD and branch locks it left, and not somebody\'s lock on the configuration', async () => {
+    const tip = (await dana.status()).remoteSha;
+    const gitDir = join(dana.dir, '.git');
+    await leftBehind(join(gitDir, 'config.lock'));
+    const stuck = endedByForceIn('commit', async () => {
+      await leftBehind(join(gitDir, 'index.lock'));
+      await leftBehind(join(gitDir, 'HEAD.lock'));
+      await leftBehind(join(gitDir, 'refs', 'heads', `${dana.branch}.lock`));
+    });
+    const service = (await RepoService.open(stuck, dana.dir, box.remote, dana.branch))!;
+    const files = { ...FIRST, [WEEK_FILE]: weekText('after a commit that hung', [E1]) };
+
+    const result = await service.publish(files, 'Save', tip);
+
+    if (result.ok || result.reason !== 'error') throw new Error('expected the save to report the time limit');
+    expect(result.error.code).toBe('timeout');
+    expect(await locksIn(gitDir)).toEqual(['config.lock']);
+    await rm(join(gitDir, 'config.lock'));
+    // The next save meets nothing in its way.
+    const next = await dana.publish(files, 'Save', tip);
+    ok(next);
+    ok(await dana.publish(FIRST, 'Back', next.commitSha));
+  });
+
+  it('a push that is ended on its time limit clears the branch lock it left; the commit is taken back and the next save goes out', async () => {
+    const tip = (await dana.status()).remoteSha;
+    const gitDir = join(dana.dir, '.git');
+    await leftBehind(join(gitDir, 'config.lock'));
+    const service = (await RepoService.open(endedByForceIn('push', () => leftBehind(lock)), dana.dir, box.remote, dana.branch))!;
+    const files = { ...FIRST, [WEEK_FILE]: weekText('after a push that hung', [E1]) };
+
+    const result = await service.publish(files, 'Save', tip);
+
+    if (result.ok || result.reason !== 'error') throw new Error('expected the save to report the time limit');
+    expect(result.error.code).toBe('timeout');
+    expect(result.status).toMatchObject({ headSha: tip, ahead: 0 });
+    expect(await locksIn(gitDir)).toEqual(['config.lock']);
+    await rm(join(gitDir, 'config.lock'));
+    const next = await dana.publish(files, 'Save', tip);
+    ok(next);
+    ok(await dana.publish(FIRST, 'Back', next.commitSha));
+  });
+
+  it('storing the name, ended on its time limit, clears the configuration\'s lock and leaves the index and HEAD to whoever holds them', async () => {
+    const gitDir = join(dana.dir, '.git');
+    await leftBehind(join(gitDir, 'index.lock'));
+    await leftBehind(join(gitDir, 'HEAD.lock'));
+    const stuck = endedByForceIn(
+      (args) => args[0] === 'config' && args[1] === 'user.name',
+      () => leftBehind(join(gitDir, 'config.lock')),
+    );
+    const service = (await RepoService.open(stuck, dana.dir, box.remote, dana.branch))!;
+
+    const error = await expectGitError(service.setIdentity('Dana L.', 'dana.l@example.com'));
+
+    expect(error.code).toBe('timeout');
+    expect((await locksIn(gitDir)).sort()).toEqual(['HEAD.lock', 'index.lock']);
+    for (const name of ['index.lock', 'HEAD.lock']) await rm(join(gitDir, name));
+  });
+
+  it('writing the mark of what was agreed with the team (the last step of a check), ended on its time limit, clears its own lock and never the index', async () => {
+    const gitDir = join(dana.dir, '.git');
+    expect(await dana.status()).toMatchObject({ ahead: 0, behind: 0 });
+    // Without the mark, the next look at the status writes it.
+    await box.raw(dana.dir, 'update-ref', '-d', 'refs/team-schedule/synced');
+    await leftBehind(join(gitDir, 'index.lock'));
+    await leftBehind(join(gitDir, 'config.lock'));
+    const stuck = endedByForceIn('update-ref', () => leftBehind(join(gitDir, 'refs', 'team-schedule', 'synced.lock')));
+    const service = (await RepoService.open(stuck, dana.dir, box.remote, dana.branch))!;
+
+    const error = await expectGitError(service.status());
+
+    expect(error.code).toBe('timeout');
+    expect((await locksIn(gitDir)).sort()).toEqual(['config.lock', 'index.lock']);
+    for (const name of ['index.lock', 'config.lock']) await rm(join(gitDir, name));
+    // The next look writes the mark.
+    expect(await dana.status()).toMatchObject({ ahead: 0, behind: 0 });
+    expect((await box.raw(dana.dir, 'rev-parse', 'refs/team-schedule/synced')).stdout.trim()).toBe((await dana.status()).headSha);
   });
 });
 

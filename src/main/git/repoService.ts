@@ -281,46 +281,78 @@ function locksNamedIn(dir: string, failure: string): string[] {
   return locks;
 }
 
-/** The locks on the index and on HEAD: what a git leaves that dies while it moves the working copy (commit, reset, checkout). */
-function workLocks(dir: string): string[] {
-  return [join(dir, '.git', 'index.lock'), join(dir, '.git', 'HEAD.lock')];
-}
-
 /** What a git leaves that dies while it writes branches: one lock per branch, and the one of packed-refs. */
 async function branchLocks(dir: string): Promise<string[]> {
   return [join(dir, '.git', 'packed-refs.lock'), ...(await lockFilesBelow(join(dir, '.git', 'refs')))];
 }
 
 /**
- * The lock files that the git which left `lock` can have left together with it. A git that
- * dies while it moves the working copy leaves the index, HEAD and the branch locked at once;
- * one that dies while it brings in the team's branches leaves one lock per branch — and the
- * next git names only the first lock it runs into.
- * Locks that such a git cannot have left are not looked at: they may belong to somebody who
- * is working in the folder with git by hand (an editor opened by `git commit` keeps the
- * index locked for as long as it is open).
+ * The lock files that can be in a command's way next, once `lock` is out of it — left by
+ * the same git that left `lock`. git names only the first lock it runs into, and it takes
+ * its locks in a fixed order: the index, then the local branch and HEAD (a commit or reset
+ * takes HEAD first, a switch of branch the branch first), while a check for updates takes
+ * one lock per branch. So:
+ *
+ *   the index, HEAD or a local branch   →  HEAD, and the branches
+ *   any other branch, or packed-refs    →  the branches
+ *   anything else (the configuration)   →  nothing more
+ *
+ * Locks that the dead git cannot have left with it are not looked at: they may belong to
+ * somebody who is working in the folder with git by hand (an editor opened by `git commit`
+ * keeps the index locked for as long as it is open).
  */
-async function locksLeftWith(dir: string, lock: string): Promise<string[]> {
-  if (workLocks(dir).includes(lock)) return [...workLocks(dir), ...(await branchLocks(dir))];
-  if (lock === join(dir, '.git', 'packed-refs.lock') || lock.startsWith(join(dir, '.git', 'refs') + sep)) return branchLocks(dir);
+export async function locksLeftWith(dir: string, lock: string): Promise<string[]> {
+  const gitDir = join(dir, '.git');
+  const head = join(gitDir, 'HEAD.lock');
+  if (lock === join(gitDir, 'index.lock') || lock === head || lock.startsWith(join(gitDir, 'refs', 'heads') + sep)) {
+    return [head, ...(await branchLocks(dir))];
+  }
+  if (lock === join(gitDir, 'packed-refs.lock') || lock.startsWith(join(gitDir, 'refs') + sep)) return branchLocks(dir);
   return [];
 }
 
-/** Commands that write to the working copy or move HEAD; ended by force they can leave the index, HEAD and a branch locked. */
-const WORKING_COPY_COMMANDS: ReadonlySet<string> = new Set(['add', 'checkout', 'commit', 'read-tree', 'reset', 'symbolic-ref', 'update-ref']);
-
 /**
  * The lock files a git that ran `args` (the subcommand comes first) can have left when it was
- * ended by force. A command that only reads leaves none, and for one this list does not know
- * nothing is assumed: its locks are dealt with when the next command meets them.
+ * ended by force:
+ *
+ *   fetch, push                          →  the branches (talking to the server writes nothing else)
+ *   commit, reset, checkout of a branch  →  the index, HEAD and the branches
+ *   add, read-tree, checkout -- <paths>  →  the index
+ *   update-ref                           →  HEAD and the branches
+ *   symbolic-ref that sets a target      →  HEAD
+ *   config                               →  the configuration
+ *
+ * A command that only reads leaves none, and for one this table does not know nothing is
+ * assumed: whatever it left is dealt with when the next command meets it.
  */
-async function locksLeftBy(dir: string, args: readonly string[]): Promise<string[]> {
+export async function locksLeftBy(dir: string, args: readonly string[]): Promise<string[]> {
+  const gitDir = join(dir, '.git');
+  const index = join(gitDir, 'index.lock');
+  const head = join(gitDir, 'HEAD.lock');
   const command = args[0] ?? '';
-  // Talking to the server writes nothing but branches.
-  if (command === 'fetch' || command === 'push') return branchLocks(dir);
-  if (command === 'config') return [join(dir, '.git', 'config.lock')];
-  if (WORKING_COPY_COMMANDS.has(command)) return [...workLocks(dir), ...(await branchLocks(dir))];
-  return [];
+  switch (command) {
+    case 'fetch':
+    case 'push':
+      return branchLocks(dir);
+    case 'commit':
+    case 'reset':
+      return [index, head, ...(await branchLocks(dir))];
+    case 'checkout':
+      // With "--" it only brings files of the working folder in line; without, it switches the branch.
+      return args.includes('--') ? [index] : [index, head, ...(await branchLocks(dir))];
+    case 'add':
+    case 'read-tree':
+      return [index];
+    case 'update-ref':
+      return [head, ...(await branchLocks(dir))];
+    case 'symbolic-ref':
+      // "symbolic-ref HEAD refs/heads/x" writes; with one name (and --quiet, --short) it only reads.
+      return args.slice(1).filter((arg) => !arg.startsWith('-')).length >= 2 ? [head] : [];
+    case 'config':
+      return [join(gitDir, 'config.lock')];
+    default:
+      return [];
+  }
 }
 
 /** When the file was last written; null when it is not there. */
