@@ -495,7 +495,9 @@ describe('lock files that a git which was ended by force left behind in the bran
 
     expect(status.fetchError).toBeNull();
     expect(status.remoteSha).toBe(sha);
-    expect(Date.now() - started).toBeLessThan(20_000);
+    // Two fetches and the two-second moment in between. (That the wait is exactly that
+    // moment is pinned, without a clock, in tests/unit/main.staleLocks.test.ts.)
+    expect(Date.now() - started).toBeLessThan(8_000);
     expect(await locksIn(join(dana.dir, '.git', 'refs'))).toEqual([]);
     expect((await dana.applyUpdate(FIRST, sha)).ok).toBe(true);
   });
@@ -522,6 +524,78 @@ describe('lock files that a git which was ended by force left behind in the bran
     expect(again.hasSchedule).toBe(true);
     expect((await box.raw(dana.dir, 'config', 'user.name')).stdout.trim()).toBe(DANA.name);
     expect(await readdir(join(dana.dir, '.git'))).not.toContain('config.lock');
+  });
+
+  // The cases below were found by the fifth review of pull request #1: looking at every kind
+  // of lock whenever one was in the way also took locks that may belong to somebody who is
+  // working in the folder with git by hand.
+
+  it('a branch lock in the way of a check does not make the app touch the index, HEAD or the configuration: each goes only when a command of the app meets it', async () => {
+    const sha = await teamCommits();
+    const gitDir = join(dana.dir, '.git');
+    for (const name of ['index.lock', 'HEAD.lock', 'config.lock']) await leftBehind(join(gitDir, name));
+    await leftBehind(lock);
+
+    // The check meets the branch lock, and nothing else.
+    expect((await dana.fetch(false)).fetchError).toBeNull();
+    expect((await locksIn(gitDir)).sort()).toEqual(['HEAD.lock', 'config.lock', 'index.lock']);
+
+    // An update needs the index and HEAD: those two go, the configuration's lock stays.
+    expect((await dana.applyUpdate(FIRST, sha)).ok).toBe(true);
+    expect(await locksIn(gitDir)).toEqual(['config.lock']);
+
+    // Storing the name needs the configuration.
+    await dana.setIdentity(DANA.name, DANA.email);
+    expect(await locksIn(gitDir)).toEqual([]);
+  });
+
+  /** A git that hangs in `command` and is ended on its time limit, as the runner reports that. */
+  function endedByForceIn(command: string, leaves: () => Promise<void> = async () => undefined): GitRunner {
+    return {
+      gitPath: box.git.gitPath,
+      async run(args, options) {
+        if (args[0] !== command) return box.git.run(args, options);
+        await leaves();
+        throw new GitError({ code: 'timeout', message: 'git did not finish in time and was stopped', detail: '' }, null);
+      },
+    };
+  }
+
+  it('a command that moves the working copy and is ended on its time limit clears what it can have left (index, HEAD, branch) — and not the configuration\'s lock', async () => {
+    const sha = await teamCommits();
+    expect((await dana.fetch(false)).fetchError).toBeNull();
+    const gitDir = join(dana.dir, '.git');
+    await leftBehind(join(gitDir, 'config.lock'));
+    const stuck = endedByForceIn('reset', async () => {
+      // What it had locked in the moment it was ended.
+      await leftBehind(join(gitDir, 'index.lock'));
+      await leftBehind(join(gitDir, 'HEAD.lock'));
+      await leftBehind(join(gitDir, 'refs', 'heads', `${dana.branch}.lock`));
+    });
+    const service = (await RepoService.open(stuck, dana.dir, box.remote, dana.branch))!;
+
+    const result = await service.applyUpdate(FIRST, sha);
+
+    if (result.ok || result.reason !== 'error') throw new Error('expected the update to report the time limit');
+    expect(result.error.code).toBe('timeout');
+    expect(await locksIn(gitDir)).toEqual(['config.lock']);
+    await rm(join(gitDir, 'config.lock'));
+    // Nothing is in the way of the next try.
+    expect((await dana.applyUpdate(FIRST, sha)).ok).toBe(true);
+  });
+
+  it('a command that only reads and is ended on its time limit clears nothing at all', async () => {
+    const gitDir = join(dana.dir, '.git');
+    for (const name of ['index.lock', 'HEAD.lock', 'config.lock']) await leftBehind(join(gitDir, name));
+    await leftBehind(lock);
+    const service = (await RepoService.open(endedByForceIn('ls-tree'), dana.dir, box.remote, dana.branch))!;
+
+    const error = await expectGitError(service.loadRemote());
+
+    expect(error.code).toBe('timeout');
+    const still = await locksIn(gitDir);
+    expect(still).toHaveLength(4);
+    for (const name of still) await rm(join(gitDir, name));
   });
 });
 
@@ -872,6 +946,33 @@ describe('the app is closed while a check for updates waits for a server that do
     expect(await readdir(join(dir, '.git'))).not.toContain('packed-refs.lock');
     // These locks were brand new, so they were given their moment first (about two seconds).
     expect(Date.now() - stoppedAt).toBeGreaterThanOrEqual(1500);
+    await fresh.idle();
+  });
+
+  it('the locks of the index, HEAD and the configuration are not a check\'s business: ended by force, it leaves them where they are', async () => {
+    const fresh = (await RepoService.open(box.git, dir, server.url, service.branch))!;
+    const before = server.connections();
+    const check = fresh.fetch(false);
+    await server.waitForConnections(before + 1);
+    // Somebody is working in this folder with git by hand, and has been for a while: an
+    // editor opened by `git commit` keeps the index locked for as long as it is open.
+    const gitDir = join(dir, '.git');
+    const longAgo = new Date(Date.now() - 60_000);
+    const theirs = ['index.lock', 'HEAD.lock', 'config.lock'].map((name) => join(gitDir, name));
+    const branchLock = join(gitDir, 'refs', 'remotes', 'origin', `${service.branch}.lock`);
+    for (const path of [...theirs, branchLock]) {
+      await writeFile(path, '');
+      await utimes(path, longAgo, longAgo);
+    }
+
+    fresh.stopFetch();
+    const status = await check;
+
+    expect(status.fetchError?.code).toBe('timeout');
+    expect(await readdir(gitDir)).toEqual(expect.arrayContaining(['index.lock', 'HEAD.lock', 'config.lock']));
+    // What a check itself can leave is cleared as before.
+    expect((await readdir(join(gitDir, 'refs'), { recursive: true })).filter((name) => name.endsWith('.lock'))).toEqual([]);
+    for (const path of theirs) await rm(path);
     await fresh.idle();
   });
 
